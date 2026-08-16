@@ -1,0 +1,129 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  color: #1f2328;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #1f2328;
+  color: #fff;
+}
+
+#toolbar .brand {
+  font-weight: 700;
+  margin-right: 8px;
+}
+
+#toolbar button {
+  background: #2d333b;
+  color: #fff;
+  border: 1px solid #444c56;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+#toolbar button:hover {
+  background: #3a424b;
+}
+
+#toolbar .status {
+  margin-left: auto;
+  color: #8b949e;
+  font-size: 13px;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+#cy {
+  flex: 1;
+  background: #fafbfc;
+}
+
+#panel {
+  width: 320px;
+  border-left: 1px solid #d0d7de;
+  padding: 16px;
+  overflow-y: auto;
+  background: #fff;
+}
+
+#panel.hidden {
+  display: none;
+}
+
+#panel h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  word-break: break-all;
+}
+
+#panel label {
+  display: block;
+  font-size: 12px;
+  color: #57606a;
+  margin: 10px 0 4px;
+}
+
+#panel input,
+#panel textarea,
+#panel select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+#panel textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+
+#panel .row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+#panel .row button {
+  flex: 1;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid #d0d7de;
+  background: #f6f8fa;
+}
+
+#panel .row button.primary {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+}
+
+#panel .row button.danger {
+  background: #fff;
+  border-color: #cf222e;
+  color: #cf222e;
+}
