@@ -32,6 +32,10 @@ slices:
     name: 文档生命周期闭环（上传→图、列表、删除→图收敛）
     status: pending
     depends_on: [slice-1-doc-to-graph, slice-4-graph-edit]
+  - id: slice-7-retrieval-visualization
+    name: 检索可视化闭环（检索框 + 图上路径高亮 + 多轮颜色演进）
+    status: pending
+    depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit, slice-5-edit-loop]
 
 steps:
   - id: 1
