@@ -56,14 +56,15 @@ steps:
     note: slice-2-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-2-v1/
   - id: 7
     name: 记录检查点
-    status: pending
+    status: completed
+    artifact: idsd/checkpoints/slice-2-incremental-merge-v1.md
   - id: 8
     name: 用户验收
     status: pending
 
 summary:
   total_steps: 8
-  completed: 6
+  completed: 7
   in_progress: 0
-  pending: 2
+  pending: 1
   failed: 0
