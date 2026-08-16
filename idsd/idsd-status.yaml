@@ -48,10 +48,12 @@ steps:
     artifact: idsd/plans/feature-list-slice-4-graph-edit.json
   - id: 5
     name: 逐切片构建
-    status: pending
+    status: completed
+    note: ①FastAPI 图 CRUD+静态托管（server.py，编辑即落盘）②Vite+Cytoscape 图渲染③编辑交互+联调（浏览器实测渲染+新建实体闭环）④pytest 31 passed
   - id: 6
     name: 运行 Holdout 评估
-    status: pending
+    status: completed
+    note: slice-4-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-4-v1/
   - id: 7
     name: 记录检查点
     status: pending
@@ -61,7 +63,7 @@ steps:
 
 summary:
   total_steps: 8
-  completed: 4
+  completed: 6
   in_progress: 0
-  pending: 4
+  pending: 2
   failed: 0

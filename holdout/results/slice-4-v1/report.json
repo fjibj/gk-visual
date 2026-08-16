@@ -1,0 +1,57 @@
+{
+  "version": "slice-4-v1",
+  "timestamp": "2026-08-16T19:09:25.184389",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "category": "success",
+      "name": "s1_create_entity_persists",
+      "expectation": "Success 1: 创建实体 → 重读图可见该实体",
+      "passed": true,
+      "detail": "nodes=['新实体']"
+    },
+    {
+      "category": "success",
+      "name": "s2_edit_entity_persists",
+      "expectation": "Success 2: 编辑描述 → 重读图描述已更新",
+      "passed": true,
+      "detail": "desc=改后描述"
+    },
+    {
+      "category": "success",
+      "name": "s3_merge_visible",
+      "expectation": "Success 3: 合并 → 源实体删除、目标实体保留",
+      "passed": true,
+      "detail": "nodes=['目标']"
+    },
+    {
+      "category": "failure",
+      "name": "f1_edit_missing_reports",
+      "expectation": "Failure 1: 编辑不存在的实体 → 显式 404，不改图",
+      "passed": true,
+      "detail": "status=404"
+    },
+    {
+      "category": "failure",
+      "name": "f2_delete_missing_reports",
+      "expectation": "Failure 2: 删除不存在的实体 → 显式 404，不改图",
+      "passed": true,
+      "detail": "status=404"
+    },
+    {
+      "category": "boundary",
+      "name": "b1_empty_graph_ok",
+      "expectation": "Boundary 1: 空图 → nodes/edges 为空列表，不崩溃",
+      "passed": true,
+      "detail": "nodes=0 edges=0"
+    },
+    {
+      "category": "boundary",
+      "name": "b2_delete_entity_cleans_relations",
+      "expectation": "Boundary 2: 删实体 → 其关系一并清理，无孤儿边",
+      "passed": true,
+      "detail": "edges after delete=[]"
+    }
+  ]
+}
