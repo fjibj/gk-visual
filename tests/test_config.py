@@ -1,0 +1,29 @@
+"""config.py 单元测试：环境变量解析。"""
+
+from __future__ import annotations
+
+import os
+
+from graphkb.config import load_config
+
+
+def test_load_config_defaults(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("GKB_"):
+            monkeypatch.delenv(k)
+    cfg = load_config()
+    assert cfg.llm.provider == "anthropic"
+    assert cfg.embedding.provider == "ollama"
+    assert cfg.embedding.dim == 1024
+
+
+def test_load_config_env_override(monkeypatch):
+    monkeypatch.setenv("GKB_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("GKB_LLM_MODEL", "mock-model")
+    monkeypatch.setenv("GKB_EMBEDDING_PROVIDER", "mock")
+    monkeypatch.setenv("GKB_EMBEDDING_DIM", "64")
+    cfg = load_config()
+    assert cfg.llm.provider == "mock"
+    assert cfg.llm.model == "mock-model"
+    assert cfg.embedding.provider == "mock"
+    assert cfg.embedding.dim == 64

@@ -13,5 +13,11 @@ dependencies = [
     "python-dotenv",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
 [tool.setuptools.packages.find]
 include = ["graphkb*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

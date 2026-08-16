@@ -48,8 +48,8 @@ steps:
     artifact: idsd/plans/feature-list-slice-1-doc-to-graph.json
   - id: 5
     name: 逐切片构建
-    status: in_progress
-    note: 子切片①（骨架+provider抽象+初始化）②（文档→图）③（检索+trace，aquery_data 结构化 dual-level）已完成并烟测通过；④CLI+pytest 待做
+    status: completed
+    note: 子切片①②③④ 全部完成并验证（骨架+provider抽象 / 文档→图 / 检索+trace / CLI+pytest 11测试通过）
   - id: 6
     name: 运行 Holdout 评估
     status: pending
@@ -62,7 +62,7 @@ steps:
 
 summary:
   total_steps: 8
-  completed: 4
-  in_progress: 1
+  completed: 5
+  in_progress: 0
   pending: 3
   failed: 0
