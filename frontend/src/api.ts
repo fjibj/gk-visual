@@ -17,6 +17,14 @@ export interface GraphData {
   edges: GraphEdge[]
 }
 
+export interface DocumentInfo {
+  doc_id: string
+  title: string
+  content_length: number
+  entity_count: number
+  relation_count: number
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init)
   if (!res.ok) {
@@ -71,4 +79,20 @@ export const api = {
       relationships_transferred: number
       sources_remaining: string[]
     }>('/api/merge', json('POST', { sources, target })),
+
+  listDocuments: () => request<{ documents: DocumentInfo[] }>('/api/documents'),
+
+  uploadDocument: (title: string, content: string) =>
+    request<{
+      doc_id: string
+      created: boolean
+      entity_count: number
+      relation_count: number
+    }>('/api/documents', json('POST', { title, content })),
+
+  deleteDocument: (docId: string) =>
+    request<{ doc_id: string; status: string }>(
+      `/api/documents/${encodeURIComponent(docId)}`,
+      { method: 'DELETE' },
+    ),
 }

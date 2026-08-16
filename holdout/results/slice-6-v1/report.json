@@ -1,0 +1,57 @@
+{
+  "version": "slice-6-v1",
+  "timestamp": "2026-08-17T00:49:16.308760",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "category": "success",
+      "name": "s1_upload_grows_graph",
+      "expectation": "Success 1: 上传文档后图长出实体",
+      "passed": true,
+      "detail": "entity_count=5 实体=['北京', '南开大学', '字节跳动', '张一鸣', '张三']"
+    },
+    {
+      "category": "success",
+      "name": "s2_list_shows_documents",
+      "expectation": "Success 2: 文档列表返回两篇文档及各自贡献数",
+      "passed": true,
+      "detail": "文档=['sample1', 'sample2'] 详情=[('sample1', 7), ('sample2', 5)]"
+    },
+    {
+      "category": "success",
+      "name": "s3_delete_converges",
+      "expectation": "Success 3: 删除文档后其独有实体消失",
+      "passed": true,
+      "detail": "删除前=['产品经理', '北京', '南开大学', '字节跳动', '字节跳动公司', '张一鸣', '张三', '李四'] 删除后=['产品经理', '北京', '字节跳动', '李四']"
+    },
+    {
+      "category": "success",
+      "name": "s4_overwrite_updates",
+      "expectation": "Success 4: 同标题重传 = 覆盖更新，文档仍是一篇",
+      "passed": true,
+      "detail": "created=False 文档数=1"
+    },
+    {
+      "category": "failure",
+      "name": "f1_delete_nonexistent_reports",
+      "expectation": "Failure 1: 删除不存在的文档必须显式报告，不静默",
+      "passed": true,
+      "detail": "status=not_found message=Document 不存在的文档 not found."
+    },
+    {
+      "category": "boundary",
+      "name": "b1_empty_content_rejected",
+      "expectation": "Boundary 1: 空内容文档被拒绝",
+      "passed": true,
+      "detail": "空内容被拒绝: 文档内容不能为空"
+    },
+    {
+      "category": "boundary",
+      "name": "b2_shared_entity_preserved",
+      "expectation": "Boundary 2: 共享实体（被多文档支撑）在删除其一后保留",
+      "passed": true,
+      "detail": "删除 sample1 后实体=['北京', '字节跳动', '李四']"
+    }
+  ]
+}

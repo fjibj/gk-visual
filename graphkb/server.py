@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import load_config
+from .documents import list_documents, upsert_document
 from .ingest import _entity_name
 from .merge import merge_entities
 from .rag import init_rag
@@ -46,6 +47,11 @@ class RelationBody(BaseModel):
 class MergeBody(BaseModel):
     sources: list[str]
     target: str
+
+
+class DocumentBody(BaseModel):
+    title: str
+    content: str
 
 
 # ---- 读图 ----
@@ -192,6 +198,35 @@ def create_app(config=None) -> FastAPI:
             "relationships_transferred": result.relationships_transferred,
             "sources_remaining": result.sources_remaining,
         }
+
+    # ---- 文档 -------
+
+    @app.post("/api/documents", status_code=201)
+    async def create_document(req: DocumentBody, request: Request):
+        if not req.content.strip():
+            raise HTTPException(status_code=400, detail="文档内容不能为空")
+        try:
+            result = await upsert_document(request.app.state.rag, req.title, req.content)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"上传文档失败: {exc}") from exc
+        return {
+            "doc_id": result.doc_id,
+            "created": result.created,
+            "entity_count": result.entity_count,
+            "relation_count": result.relation_count,
+        }
+
+    @app.get("/api/documents")
+    async def get_documents(request: Request):
+        docs = await list_documents(request.app.state.rag)
+        return {"documents": [d.__dict__ for d in docs]}
+
+    @app.delete("/api/documents/{doc_id}")
+    async def delete_doc(doc_id: str, request: Request):
+        result = await request.app.state.rag.adelete_by_doc_id(doc_id)
+        if result.status != "success":
+            raise HTTPException(status_code=404, detail=result.message or f"文档不存在: {doc_id}")
+        return {"doc_id": doc_id, "status": result.status}
 
     # ---- 静态前端托管 ----
 

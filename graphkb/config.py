@@ -40,6 +40,7 @@ class Config:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     working_dir: str = "./data"
     language: str = "Chinese"
+    workspace: str = ""
 
 
 def load_config() -> Config:
@@ -62,4 +63,5 @@ def load_config() -> Config:
         ),
         working_dir=_env("GKB_WORKING_DIR", "./data"),
         language=_env("GKB_LANGUAGE", "Chinese"),
+        workspace=_env("GKB_WORKSPACE", ""),
     )

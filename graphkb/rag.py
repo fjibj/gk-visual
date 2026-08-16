@@ -11,6 +11,7 @@ from .providers import build_embedding, build_llm
 def build_rag(config: Config) -> LightRAG:
     return LightRAG(
         working_dir=config.working_dir,
+        workspace=config.workspace,
         llm_model_func=build_llm(config),
         embedding_func=build_embedding(config),
         addon_params={"language": config.language},

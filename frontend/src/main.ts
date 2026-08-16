@@ -1,7 +1,7 @@
 import cytoscape from 'cytoscape'
 import coseBilkent from 'cytoscape-cose-bilkent'
 import './style.css'
-import { api, GraphData } from './api'
+import { api, GraphData, DocumentInfo } from './api'
 
 cytoscape.use(coseBilkent)
 
@@ -148,7 +148,7 @@ const panelTitle = document.getElementById('panel-title')!
 const panelForm = document.getElementById('panel-form')!
 const panelActions = document.getElementById('panel-actions')!
 
-type Mode = 'node' | 'edge' | 'new-entity' | 'new-relation' | 'merge'
+type Mode = 'node' | 'edge' | 'new-entity' | 'new-relation' | 'merge' | 'documents'
 let mode: Mode | null = null
 let selectedNodeId = ''
 let selectedEdge: { source: string; target: string } | null = null
@@ -406,6 +406,83 @@ async function doMerge() {
   }
 }
 
+// ---- 文档管理 ----
+
+function showDocumentsPanel() {
+  mode = 'documents'
+  showPanel(
+    '文档管理',
+    `
+      <label>文档标题</label>
+      <input id="d-title" placeholder="同一标题重复上传 = 覆盖更新" />
+      <label>文档内容</label>
+      <textarea id="d-content" placeholder="粘贴文档文本..."></textarea>
+      <div class="doc-list" id="d-list"></div>
+    `,
+    `<div class="row"><button class="primary" id="a-upload">上传 / 更新</button></div>`,
+  )
+  document.getElementById('a-upload')!.onclick = uploadDocument
+  renderDocList()
+}
+
+async function renderDocList() {
+  const listEl = document.getElementById('d-list')
+  if (!listEl) return
+  try {
+    const { documents } = await api.listDocuments()
+    if (documents.length === 0) {
+      listEl.innerHTML = '<div class="doc-empty">暂无文档</div>'
+      return
+    }
+    listEl.innerHTML = documents
+      .map(
+        (d: DocumentInfo) => `
+          <div class="doc-item">
+            <div class="doc-meta">
+              <span class="doc-title">${escapeHtml(d.title)}</span>
+              <span class="doc-stats">${d.entity_count} 实体 · ${d.relation_count} 关系</span>
+            </div>
+            <button class="doc-del" data-id="${escapeHtml(d.doc_id)}">删除</button>
+          </div>`,
+      )
+      .join('')
+    listEl.querySelectorAll<HTMLButtonElement>('.doc-del').forEach((btn) => {
+      btn.onclick = () => deleteDocument(btn.dataset.id!)
+    })
+  } catch (err) {
+    listEl.innerHTML = `<div class="doc-empty">加载失败: ${escapeHtml((err as Error).message)}</div>`
+  }
+}
+
+async function uploadDocument() {
+  const title = (document.getElementById('d-title') as HTMLInputElement).value.trim()
+  const content = (document.getElementById('d-content') as HTMLTextAreaElement).value.trim()
+  if (!content) return setStatus('文档内容不能为空', true)
+  try {
+    const r = await api.uploadDocument(title || 'untitled', content)
+    setStatus(
+      `文档「${r.doc_id}」${r.created ? '已上传' : '已更新'}：${r.entity_count} 实体 · ${r.relation_count} 关系`,
+    )
+    ;(document.getElementById('d-content') as HTMLTextAreaElement).value = ''
+    await renderDocList()
+    await loadGraph()
+  } catch (err) {
+    setStatus(`上传失败: ${(err as Error).message}`, true)
+  }
+}
+
+async function deleteDocument(docId: string) {
+  if (!confirm(`确定删除文档「${docId}」？其独有实体/关系将从图中清理。`)) return
+  try {
+    await api.deleteDocument(docId)
+    setStatus(`文档「${docId}」已删除`)
+    await renderDocList()
+    await loadGraph()
+  } catch (err) {
+    setStatus(`删除失败: ${(err as Error).message}`, true)
+  }
+}
+
 // ---- 事件绑定 ----
 
 cy.on('tap', 'node', (evt) => {
@@ -438,6 +515,7 @@ document.getElementById('btn-refresh')!.onclick = loadGraph
 document.getElementById('btn-add-entity')!.onclick = showNewEntityPanel
 document.getElementById('btn-add-relation')!.onclick = showNewRelationPanel
 document.getElementById('btn-merge')!.onclick = showMergePanel
+document.getElementById('btn-docs')!.onclick = showDocumentsPanel
 document.getElementById('btn-close-panel')!.onclick = hidePanel
 
 window.addEventListener('resize', () => {

@@ -193,3 +193,64 @@ body {
   flex: 0 0 auto;
   margin: 0;
 }
+
+#panel .doc-list {
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 4px;
+}
+
+#panel .doc-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+#panel .doc-item:hover {
+  background: #f6f8fa;
+}
+
+#panel .doc-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+#panel .doc-title {
+  font-size: 13px;
+  color: #1f2328;
+}
+
+#panel .doc-stats {
+  font-size: 11px;
+  color: #57606a;
+}
+
+#panel .doc-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: #8b949e;
+}
+
+#panel .doc-del {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid #cf222e;
+  background: #fff;
+  color: #cf222e;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#panel .doc-del:hover {
+  background: #cf222e;
+  color: #fff;
+}

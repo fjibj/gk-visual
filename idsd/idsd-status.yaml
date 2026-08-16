@@ -4,7 +4,7 @@
 workflow:
   type: planned-build
   project: graph-knowledge-base
-  current_slice: slice-5-edit-loop
+  current_slice: slice-7-retrieval-visualization
   status: in_progress
 
 slices:
@@ -26,54 +26,50 @@ slices:
     depends_on: [slice-1-doc-to-graph]
   - id: slice-5-edit-loop
     name: 编辑回路（编辑 → 检索随之变化）
-    status: in_progress
+    status: completed
     depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit]
   - id: slice-6-document-lifecycle
     name: 文档生命周期闭环（上传→图、列表、删除→图收敛）
-    status: pending
+    status: completed
     depends_on: [slice-1-doc-to-graph, slice-4-graph-edit]
   - id: slice-7-retrieval-visualization
     name: 检索可视化闭环（检索框 + 图上路径高亮 + 多轮颜色演进）
-    status: pending
+    status: in_progress
     depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit, slice-5-edit-loop]
 
 steps:
   - id: 1
     name: 编写 Intent
     status: completed
-    artifact: idsd/intents/slice-5-edit-loop/intent.md
+    artifact: idsd/intents/slice-7-retrieval-visualization/intent.md
   - id: 2
     name: 编写 Expectations
     status: completed
-    artifact: idsd/intents/slice-5-edit-loop/expectations.md
+    artifact: idsd/intents/slice-7-retrieval-visualization/expectations.md
   - id: 3
     name: 组装 Context
-    status: completed
-    artifact: idsd/context/context-bundle-slice-5-edit-loop.md
-    note: spike 实证 4 验收点回路闭环；孤立实体不召回是 LightRAG 固有边界
+    status: in_progress
+    artifact: idsd/context/context-bundle-slice-7-retrieval-visualization.md
   - id: 4
     name: 规划实现路径
-    status: completed
-    artifact: idsd/plans/feature-list-slice-5-edit-loop.json
+    status: pending
+    artifact: idsd/plans/feature-list-slice-7-retrieval-visualization.json
   - id: 5
     name: 逐切片构建
-    status: completed
-    note: 无新业务代码；tests/test_edit_loop.py 4 用例锁定编辑→图数据层（离线 mock）
+    status: pending
   - id: 6
     name: 运行 Holdout 评估
-    status: completed
-    note: slice-5-v1 判卷 7/7 通过（4成功/1失败/2边界），写档 holdout/results/slice-5-v1/
+    status: pending
   - id: 7
     name: 记录检查点
-    status: completed
-    artifact: idsd/checkpoints/slice-5-edit-loop-v1.md
+    status: pending
   - id: 8
     name: 用户验收
     status: pending
 
 summary:
   total_steps: 8
-  completed: 7
-  in_progress: 0
-  pending: 1
+  completed: 2
+  in_progress: 1
+  pending: 5
   failed: 0

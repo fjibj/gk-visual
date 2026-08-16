@@ -1,0 +1,29 @@
+{
+  "slice": "slice-6-document-lifecycle",
+  "slices": [
+    {
+      "id": 1,
+      "name": "后端文档生命周期（graphkb/documents.py + server 端点）",
+      "description": "graphkb/documents.py：upsert_document（上传/覆盖，先删后插）、list_documents（含贡献实体/关系数）、delete_document；server.py 加 POST/GET/DELETE /api/documents。",
+      "dependencies": [],
+      "estimated_minutes": 30,
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "前端文档管理面板",
+      "description": "frontend：工具栏加「文档」按钮，面板含上传（标题+文本）+ 文档列表（含实体/关系数+删除）。",
+      "dependencies": [1],
+      "estimated_minutes": 25,
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "name": "pytest + holdout 判卷",
+      "description": "tests/test_documents.py（slugify/覆盖逻辑/贡献计数，_FakeRag 离线）；holdout 7 场景用真实 LLM 判卷（上传→图、列表、删除→收敛、覆盖更新、边界）。",
+      "dependencies": [1, 2],
+      "estimated_minutes": 30,
+      "status": "pending"
+    }
+  ]
+}
