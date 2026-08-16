@@ -1,0 +1,29 @@
+{
+  "slice": "slice-3-retrieval-transparency",
+  "slices": [
+    {
+      "id": 1,
+      "name": "逐项分数 instrumentation",
+      "description": "query.py 加 _score_trace：调 entities_vdb.query / relationships_vdb.query，用 entity_name（实体）/ sorted(src,tgt)（关系）做 key 把 distance 填回 trace；float32→float 转换；查询异常/查不到时该分数=null（绝不编造）。",
+      "dependencies": [],
+      "estimated_minutes": 30,
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "CLI 渲染（透明窗）",
+      "description": "graphkb/render.py：把 QueryResult 渲染成富文本检索路径（高层关键词 → 低层实体 → 命中关系 → 依据块，命中项带分数）；CLI query 默认渲染，--json 保留原始 trace；trace 空时如实显示未命中，不画假路径。",
+      "dependencies": [1],
+      "estimated_minutes": 30,
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "name": "pytest 确定性测试",
+      "description": "锁定 _score_trace 映射（entity_name key、sorted(src,tgt) key、float 转换、异常降级 null）、render 输出（含命中列表/未命中/无分数标注）。",
+      "dependencies": [1, 2],
+      "estimated_minutes": 20,
+      "status": "pending"
+    }
+  ]
+}
