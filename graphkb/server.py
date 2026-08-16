@@ -77,16 +77,16 @@ async def _read_graph(rag) -> dict:
 
 # ---- app 生命周期 ----
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    load_dotenv()
-    rag = await init_rag(load_config())
-    app.state.rag = rag
-    yield
-    await rag.finalize_storages()
+def create_app(config=None) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        load_dotenv()
+        cfg = config if config is not None else load_config()
+        rag = await init_rag(cfg)
+        app.state.rag = rag
+        yield
+        await rag.finalize_storages()
 
-
-def create_app() -> FastAPI:
     app = FastAPI(title="graphkb", lifespan=lifespan)
 
     app.add_middleware(
@@ -109,8 +109,8 @@ def create_app() -> FastAPI:
     @app.post("/api/entities", status_code=201)
     async def create_entity(req: EntityCreate, request: Request):
         data: dict = {}
-        if req.description is not None:
-            data["description"] = req.description
+        # LightRAG 要求 description 非空；用户不填时用实体名兑底
+        data["description"] = (req.description or "").strip() or req.name
         if req.type is not None:
             data["entity_type"] = req.type
         try:
