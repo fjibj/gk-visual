@@ -1,0 +1,37 @@
+{
+  "slice": "slice-4-graph-edit",
+  "slices": [
+    {
+      "id": 1,
+      "name": "后端 HTTP API（FastAPI + 图 CRUD）",
+      "description": "graphkb/server.py：FastAPI 应用，进程内 init_rag；端点 GET /api/graph（节点/边列表）、POST/PATCH/DELETE 实体与关系、POST /api/merge（合并）；全部复用 LightRAG 编辑 API；托管静态前端目录。",
+      "dependencies": [],
+      "estimated_minutes": 40,
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "前端图渲染（Vite + Cytoscape）",
+      "description": "frontend/：Vite + TS + Cytoscape.js；拉取 /api/graph 渲染节点/边，节点显示实体名/类型，边显示关系描述；空图/加载失败得体提示。",
+      "dependencies": [1],
+      "estimated_minutes": 40,
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "name": "前端编辑交互 + 联调",
+      "description": "前端点选节点/边 → 编辑表单（改描述/类型/关系描述）→ 调后端 API；新建实体/关系、删除、合并；后端托管 Vite 构建产物，一个进程跑通。",
+      "dependencies": [2],
+      "estimated_minutes": 40,
+      "status": "pending"
+    },
+    {
+      "id": 4,
+      "name": "pytest + holdout 落库验证",
+      "description": "pytest 锁定 API 层编辑落库（_FakeRag 或真实 rag 断言编辑后重读图生效）；holdout 考卷验证可视化/编辑/落库。",
+      "dependencies": [1, 2, 3],
+      "estimated_minutes": 30,
+      "status": "pending"
+    }
+  ]
+}

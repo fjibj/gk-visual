@@ -4,7 +4,7 @@
 workflow:
   type: planned-build
   project: graph-knowledge-base
-  current_slice: slice-3-retrieval-transparency
+  current_slice: slice-4-graph-edit
   status: in_progress
 
 slices:
@@ -18,11 +18,11 @@ slices:
     depends_on: [slice-1-doc-to-graph]
   - id: slice-3-retrieval-transparency
     name: 检索路径可视化（透明窗渲染）
-    status: in_progress
+    status: completed
     depends_on: [slice-1-doc-to-graph, slice-2-incremental-merge]
   - id: slice-4-graph-edit
     name: 图谱可视化 + 手工编辑
-    status: pending
+    status: in_progress
     depends_on: [slice-1-doc-to-graph]
   - id: slice-5-edit-loop
     name: 编辑回路（编辑 → 检索随之变化）
@@ -33,38 +33,35 @@ steps:
   - id: 1
     name: 编写 Intent
     status: completed
-    artifact: idsd/intents/slice-3-retrieval-transparency/intent.md
+    artifact: idsd/intents/slice-4-graph-edit/intent.md
   - id: 2
     name: 编写 Expectations
     status: completed
-    artifact: idsd/intents/slice-3-retrieval-transparency/expectations.md
+    artifact: idsd/intents/slice-4-graph-edit/expectations.md
   - id: 3
     name: 组装 Context
     status: completed
-    artifact: idsd/context/context-bundle-slice-3-retrieval-transparency.md
+    artifact: idsd/context/context-bundle-slice-4-graph-edit.md
   - id: 4
     name: 规划实现路径
     status: completed
-    artifact: idsd/plans/feature-list-slice-3-retrieval-transparency.json
+    artifact: idsd/plans/feature-list-slice-4-graph-edit.json
   - id: 5
     name: 逐切片构建
-    status: completed
-    note: 子切片①逐项分数 _score_trace（复用向量库 query）②CLI 透明窗渲染 render.py ③pytest（21 passed）+ conftest mkdtemp 修复
+    status: pending
   - id: 6
     name: 运行 Holdout 评估
-    status: completed
-    note: slice-3-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-3-v1/
+    status: pending
   - id: 7
     name: 记录检查点
-    status: completed
-    artifact: idsd/checkpoints/slice-3-retrieval-transparency-v1.md
+    status: pending
   - id: 8
     name: 用户验收
     status: pending
 
 summary:
   total_steps: 8
-  completed: 7
+  completed: 4
   in_progress: 0
-  pending: 1
+  pending: 4
   failed: 0
