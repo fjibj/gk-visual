@@ -1,14 +1,17 @@
-"""CLI 入口。当前（S1 子切片①）只实现 doctor 自检；ingest/query 后续子切片接入。"""
+"""CLI 入口。"""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 from .config import load_config
+from .ingest import ingest_document
 from .providers import build_embedding, build_llm
+from .rag import init_rag
 
 
 async def _doctor() -> int:
@@ -28,12 +31,29 @@ async def _doctor() -> int:
     print(f"  embedding shape={vecs.shape} dtype={vecs.dtype}")
 
     print("initializing LightRAG ...")
-    from .rag import init_rag
-
     rag = await init_rag(cfg)
     print("  LightRAG initialized OK")
     await rag.finalize_storages()
     print("doctor OK")
+    return 0
+
+
+async def _ingest(path: str) -> int:
+    cfg = load_config()
+    rag = await init_rag(cfg)
+    text = Path(path).read_text(encoding="utf-8")
+    result = await ingest_document(rag, text)
+    await rag.finalize_storages()
+
+    print(f"doc_id: {result.doc_id}")
+    print(f"entity_count: {result.entity_count}")
+    print(f"relation_count: {result.relation_count}")
+    print("entities:")
+    for e in result.entities:
+        print(f"  - {e}")
+    print("relations:")
+    for s, t in result.relations:
+        print(f"  - {s} -> {t}")
     return 0
 
 
@@ -43,17 +63,20 @@ def main() -> None:
 
     sub.add_parser("doctor", help="自检：验证 LLM/embedding/LightRAG 初始化")
 
-    # 占位（子切片②③④ 实现）
-    sub.add_parser("ingest", help="摄入文档（待实现）")
-    sub.add_parser("query", help="检索问答（待实现）")
+    p_ingest = sub.add_parser("ingest", help="摄入单个文档（UTF-8 文本）")
+    p_ingest.add_argument("path", help="文档路径")
+
+    sub.add_parser("query", help="检索问答（待实现，子切片③）")
 
     args = parser.parse_args()
     load_dotenv()
 
     if args.cmd == "doctor":
         raise SystemExit(asyncio.run(_doctor()))
-    if args.cmd in ("ingest", "query"):
-        print(f"'{args.cmd}' 尚未实现（后续子切片接入）")
+    if args.cmd == "ingest":
+        raise SystemExit(asyncio.run(_ingest(args.path)))
+    if args.cmd == "query":
+        print("'query' 尚未实现（子切片③）")
         raise SystemExit(1)
     parser.print_help()
 
