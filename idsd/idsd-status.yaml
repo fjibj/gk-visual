@@ -26,7 +26,7 @@ slices:
     depends_on: [slice-1-doc-to-graph]
   - id: slice-5-edit-loop
     name: 编辑回路（编辑 → 检索随之变化）
-    status: pending
+    status: in_progress
     depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit]
   - id: slice-6-document-lifecycle
     name: 文档生命周期闭环（上传→图、列表、删除→图收敛）
@@ -37,39 +37,35 @@ steps:
   - id: 1
     name: 编写 Intent
     status: completed
-    artifact: idsd/intents/slice-4-graph-edit/intent.md
+    artifact: idsd/intents/slice-5-edit-loop/intent.md
   - id: 2
     name: 编写 Expectations
     status: completed
-    artifact: idsd/intents/slice-4-graph-edit/expectations.md
+    artifact: idsd/intents/slice-5-edit-loop/expectations.md
   - id: 3
     name: 组装 Context
-    status: completed
-    artifact: idsd/context/context-bundle-slice-4-graph-edit.md
+    status: in_progress
+    artifact: idsd/context/context-bundle-slice-5-edit-loop.md
   - id: 4
     name: 规划实现路径
-    status: completed
-    artifact: idsd/plans/feature-list-slice-4-graph-edit.json
+    status: pending
+    artifact: idsd/plans/feature-list-slice-5-edit-loop.json
   - id: 5
     name: 逐切片构建
-    status: completed
-    note: ①FastAPI 图 CRUD+静态托管（server.py，编辑即落盘）②Vite+Cytoscape 图渲染③编辑交互+联调（浏览器实测渲染+新建实体闭环）④pytest 31 passed
+    status: pending
   - id: 6
     name: 运行 Holdout 评估
-    status: completed
-    note: slice-4-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-4-v1/
+    status: pending
   - id: 7
     name: 记录检查点
-    status: completed
-    artifact: idsd/checkpoints/slice-4-graph-edit-v1.md
+    status: pending
   - id: 8
     name: 用户验收
-    status: completed
-    note: 2026-08-16 用户确认合并面板修复后验收通过，S4 收官
+    status: pending
 
 summary:
   total_steps: 8
-  completed: 8
-  in_progress: 0
-  pending: 0
+  completed: 2
+  in_progress: 1
+  pending: 5
   failed: 0

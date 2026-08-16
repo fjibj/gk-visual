@@ -1,0 +1,57 @@
+{
+  "version": "slice-5-v1",
+  "timestamp": "2026-08-17T00:00:27.635875",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "category": "success",
+      "name": "s1_edit_changes_score",
+      "expectation": "Success 1: 编辑实体描述后检索 trace 中该实体描述变化",
+      "passed": true,
+      "detail": "张三 desc '软件工程师' -> '数据科学家，专注推荐系统'，score=0.6392730474472046"
+    },
+    {
+      "category": "success",
+      "name": "s2_delete_stops_hit",
+      "expectation": "Success 2: 删除实体后检索不再命中该实体",
+      "passed": true,
+      "detail": "编辑前=['北京', '字节跳动', '张三'] 编辑后=['字节跳动', '张三']"
+    },
+    {
+      "category": "success",
+      "name": "s3_merge_hits_new_name",
+      "expectation": "Success 3: 合并后检索命中新名、不命中旧名",
+      "passed": true,
+      "detail": "合并后命中实体=['北京', '字节跳动', '李四']"
+    },
+    {
+      "category": "success",
+      "name": "s4_create_with_relation_hits",
+      "expectation": "Success 4: 新建实体+关系后检索可命中新增内容",
+      "passed": true,
+      "detail": "命中实体=['上海', '北京', '字节跳动', '张三'] 命中关系=[('上海', '字节跳动'), ('北京', '字节跳动'), ('字节跳动', '张三')]"
+    },
+    {
+      "category": "failure",
+      "name": "f1_edit_nonexistent_reports",
+      "expectation": "Failure 1: 编辑不存在的实体必须显式报错且不污染图",
+      "passed": true,
+      "detail": "报错=ValueError，张三仍在=True"
+    },
+    {
+      "category": "boundary",
+      "name": "b1_isolated_entity_not_recalled",
+      "expectation": "Boundary 1: 孤立实体不被 dual-level 检索召回（已知边界，锁定此行为）",
+      "passed": true,
+      "detail": "孤立上海召回=False，命中=['北京', '字节跳动', '张三']"
+    },
+    {
+      "category": "boundary",
+      "name": "b2_unrelated_edit_no_side_effect",
+      "expectation": "Boundary 2: 编辑无关实体不影响无关检索路径",
+      "passed": true,
+      "detail": "编辑前=['北京', '字节跳动', '张三'] 编辑后=['北京', '字节跳动', '张三']"
+    }
+  ]
+}

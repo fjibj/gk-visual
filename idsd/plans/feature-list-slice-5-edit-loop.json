@@ -1,0 +1,21 @@
+{
+  "slice": "slice-5-edit-loop",
+  "slices": [
+    {
+      "id": 1,
+      "name": "pytest 锁定编辑→图数据层回路（离线 mock）",
+      "description": "tests/test_edit_loop.py：mock LLM + mock embedding，断言编辑 API 调用后图状态正确变化——改实体→节点 description 变、删实体→节点+关系消失、合并→源删除+关系重指目标、建实体+关系→图新增节点/边。这是编辑回路的图数据层基础（语义检索回路由 holdout 判卷，mock 向量做不了语义匹配）。",
+      "dependencies": [],
+      "estimated_minutes": 20,
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "holdout 判卷锁定编辑→检索语义回路（真实 bge-m3）",
+      "description": "holdout/scenarios/slice-5-edit-loop/：复用 S1 harness（ainsert_custom_kg + mock LLM + bge-m3 + 显式 hl_keywords），7 场景覆盖 4 验收点（改描述→分数/描述变化、删→不命中、合并→命中新名、建+关系→命中）+ 边界（孤立实体不召回、编辑无关实体不误伤、编辑不存在实体报错）。",
+      "dependencies": [1],
+      "estimated_minutes": 30,
+      "status": "pending"
+    }
+  ]
+}
