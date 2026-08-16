@@ -49,7 +49,7 @@ steps:
   - id: 5
     name: 逐切片构建
     status: in_progress
-    note: 子切片①（骨架+provider抽象+初始化）②（文档→图，真实LLM+bge-m3，7实体/7关系烟测通过）已完成；③检索+trace、④CLI+pytest 待做
+    note: 子切片①（骨架+provider抽象+初始化）②（文档→图）③（检索+trace，aquery_data 结构化 dual-level）已完成并烟测通过；④CLI+pytest 待做
   - id: 6
     name: 运行 Holdout 评估
     status: pending

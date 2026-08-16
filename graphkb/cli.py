@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 from .config import load_config
 from .ingest import ingest_document
 from .providers import build_embedding, build_llm
+from .query import query
 from .rag import init_rag
 
 
@@ -57,6 +59,19 @@ async def _ingest(path: str) -> int:
     return 0
 
 
+async def _query(question: str) -> int:
+    cfg = load_config()
+    rag = await init_rag(cfg)
+    result = await query(rag, question)
+    await rag.finalize_storages()
+
+    print(f"question: {result.question}")
+    print(f"answer: {result.answer}")
+    print("trace:")
+    print(json.dumps(result.trace, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="graphkb")
     sub = parser.add_subparsers(dest="cmd")
@@ -66,7 +81,8 @@ def main() -> None:
     p_ingest = sub.add_parser("ingest", help="摄入单个文档（UTF-8 文本）")
     p_ingest.add_argument("path", help="文档路径")
 
-    sub.add_parser("query", help="检索问答（待实现，子切片③）")
+    p_query = sub.add_parser("query", help="检索问答（返回答案 + 结构化 trace）")
+    p_query.add_argument("question", help="问题")
 
     args = parser.parse_args()
     load_dotenv()
@@ -76,8 +92,7 @@ def main() -> None:
     if args.cmd == "ingest":
         raise SystemExit(asyncio.run(_ingest(args.path)))
     if args.cmd == "query":
-        print("'query' 尚未实现（子切片③）")
-        raise SystemExit(1)
+        raise SystemExit(asyncio.run(_query(args.question)))
     parser.print_help()
 
 
