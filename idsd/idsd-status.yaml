@@ -4,8 +4,8 @@
 workflow:
   type: planned-build
   project: graph-knowledge-base
-  current_slice: slice-1-doc-to-graph
-  status: completed
+  current_slice: slice-2-incremental-merge
+  status: in_progress
 
 slices:
   - id: slice-1-doc-to-graph
@@ -14,7 +14,7 @@ slices:
     depends_on: []
   - id: slice-2-incremental-merge
     name: 增量合并 + 实体对齐
-    status: pending
+    status: in_progress
     depends_on: [slice-1-doc-to-graph]
   - id: slice-3-retrieval-transparency
     name: 检索路径可视化（透明窗渲染）
@@ -33,39 +33,35 @@ steps:
   - id: 1
     name: 编写 Intent
     status: completed
-    artifact: idsd/intents/slice-1-doc-to-graph/intent.md
+    artifact: idsd/intents/slice-2-incremental-merge/intent.md
   - id: 2
     name: 编写 Expectations
     status: completed
-    artifact: idsd/intents/slice-1-doc-to-graph/expectations.md
+    artifact: idsd/intents/slice-2-incremental-merge/expectations.md
   - id: 3
     name: 组装 Context
     status: completed
-    artifact: idsd/context/context-bundle-slice-1-doc-to-graph.md
+    artifact: idsd/context/context-bundle-slice-2-incremental-merge.md
   - id: 4
     name: 规划实现路径
     status: completed
-    artifact: idsd/plans/feature-list-slice-1-doc-to-graph.json
+    artifact: idsd/plans/feature-list-slice-2-incremental-merge.json
   - id: 5
     name: 逐切片构建
-    status: completed
-    note: 子切片①②③④ 全部完成并验证（骨架+provider抽象 / 文档→图 / 检索+trace / CLI+pytest 11测试通过）
+    status: pending
   - id: 6
     name: 运行 Holdout 评估
-    status: completed
-    note: slice-1-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-1-v1/
+    status: pending
   - id: 7
     name: 记录检查点
-    status: completed
-    artifact: idsd/checkpoints/slice-1-doc-to-graph-v1.md
+    status: pending
   - id: 8
     name: 用户验收
-    status: completed
-    note: 用户 2026-08-16 自测 doctor/ingest/query/pytest/evaluate 全通过，验收通过
+    status: pending
 
 summary:
   total_steps: 8
-  completed: 8
+  completed: 4
   in_progress: 0
-  pending: 0
+  pending: 4
   failed: 0

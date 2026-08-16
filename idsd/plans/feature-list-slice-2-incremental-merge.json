@@ -1,0 +1,29 @@
+{
+  "slice": "slice-2-incremental-merge",
+  "slices": [
+    {
+      "id": 1,
+      "name": "增量摄入 + 对齐可见",
+      "description": "ingest_document 支持多次调用累积（ainsert 已增量，复用）；摄入前做实体名快照，摄入后 diff，返回本次新增实体名单（new_entities），CLI 打印增量信息，让『第二篇并入不重建』可见。同名自动合并复用 LightRAG，不重写。",
+      "dependencies": [],
+      "estimated_minutes": 30,
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "显式合并 merge_entities",
+      "description": "封装 rag.amerge_entities（SDK 核心方法）为 graphkb/merge.py 的 merge_entities()，CLI 新增 merge 命令：merge <src...> --into <target>；返回结构化结果（删除的源、转移关系数、目标终态），对齐过程可见。",
+      "dependencies": [1],
+      "estimated_minutes": 30,
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "name": "pytest 确定性测试",
+      "description": "锁定：ingest 快照 diff 逻辑（new_entities 计算）、merge 封装（_FakeRag.amerge_entities 调用参数与返回键）、CLI 参数解析。",
+      "dependencies": [1, 2],
+      "estimated_minutes": 20,
+      "status": "pending"
+    }
+  ]
+}
