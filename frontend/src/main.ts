@@ -435,6 +435,10 @@ document.getElementById('btn-add-relation')!.onclick = showNewRelationPanel
 document.getElementById('btn-merge')!.onclick = showMergePanel
 document.getElementById('btn-close-panel')!.onclick = hidePanel
 
+window.addEventListener('resize', () => {
+  cy.resize()
+})
+
 ;(window as any).__gkb_showNodePanel__ = showNodePanel
 ;(window as any).__gkb_showEdgePanel__ = showEdgePanel
 ;(window as any).__gkb_data__ = () => currentData
