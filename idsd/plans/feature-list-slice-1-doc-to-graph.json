@@ -1,0 +1,37 @@
+{
+  "slice": "slice-1-doc-to-graph",
+  "slices": [
+    {
+      "id": 1,
+      "name": "项目骨架 + 可配置 provider 抽象 + LightRAG 初始化",
+      "description": "建立 Python 包结构（pyproject、包目录、CLI 入口）；配置层（YAML + env 覆盖）；provider 工厂：openai_compat / anthropic / ollama 三类，LLM 与 embedding 独立配置；注入 llm_model_func/embedding_func + initialize_storages；Chinese 抽取。",
+      "dependencies": [],
+      "estimated_minutes": 40,
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "文档 → 图",
+      "description": "实现单篇文档摄入（insert），抽取实体/关系落图；提供查询图里实体数/关系数的能力。",
+      "dependencies": [1],
+      "estimated_minutes": 30,
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "name": "检索 + trace 暴露口",
+      "description": "实现 query 返回答案 + 结构化 trace（先验证 only_need_context 结构，必要时下探内部检索函数做薄 instrumentation）；trace 输出 JSON（实体/关系命中 + 评分）。",
+      "dependencies": [2],
+      "estimated_minutes": 30,
+      "status": "pending"
+    },
+    {
+      "id": 4,
+      "name": "CLI 封装 + pytest 验证",
+      "description": "封装 ingest/query 命令行；针对 expectations 写 pytest 自测（构图非空、trace 非空、答案可溯源）。",
+      "dependencies": [3],
+      "estimated_minutes": 20,
+      "status": "pending"
+    }
+  ]
+}

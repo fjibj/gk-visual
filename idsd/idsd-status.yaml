@@ -1,0 +1,68 @@
+# IDSD 状态跟踪 — 由 planned-build 流程维护
+# 查看进度：直接读本文件
+
+workflow:
+  type: planned-build
+  project: graph-knowledge-base
+  current_slice: slice-1-doc-to-graph
+  status: in_progress
+
+slices:
+  - id: slice-1-doc-to-graph
+    name: 文档→图 + 可检索（含 trace 暴露口）
+    status: in_progress
+    depends_on: []
+  - id: slice-2-incremental-merge
+    name: 增量合并 + 实体对齐
+    status: pending
+    depends_on: [slice-1-doc-to-graph]
+  - id: slice-3-retrieval-transparency
+    name: 检索路径可视化（透明窗渲染）
+    status: pending
+    depends_on: [slice-1-doc-to-graph, slice-2-incremental-merge]
+  - id: slice-4-graph-edit
+    name: 图谱可视化 + 手工编辑
+    status: pending
+    depends_on: [slice-1-doc-to-graph]
+  - id: slice-5-edit-loop
+    name: 编辑回路（编辑 → 检索随之变化）
+    status: pending
+    depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit]
+
+steps:
+  - id: 1
+    name: 编写 Intent
+    status: completed
+    artifact: idsd/intents/slice-1-doc-to-graph/intent.md
+  - id: 2
+    name: 编写 Expectations
+    status: completed
+    artifact: idsd/intents/slice-1-doc-to-graph/expectations.md
+  - id: 3
+    name: 组装 Context
+    status: completed
+    artifact: idsd/context/context-bundle-slice-1-doc-to-graph.md
+  - id: 4
+    name: 规划实现路径
+    status: completed
+    artifact: idsd/plans/feature-list-slice-1-doc-to-graph.json
+  - id: 5
+    name: 逐切片构建
+    status: in_progress
+    note: 子切片①（骨架+provider抽象+LightRAG初始化）已完成并烟测通过；②文档→图、③检索+trace、④CLI+pytest 待做
+  - id: 6
+    name: 运行 Holdout 评估
+    status: pending
+  - id: 7
+    name: 记录检查点
+    status: pending
+  - id: 8
+    name: 用户验收
+    status: pending
+
+summary:
+  total_steps: 8
+  completed: 4
+  in_progress: 1
+  pending: 3
+  failed: 0

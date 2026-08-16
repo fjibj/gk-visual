@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# 密钥（绝不入库）
+.env
+
+# LightRAG 数据目录
+data/
+rag_storage/
+inputs/
+
+# OS
+.DS_Store
+Thumbs.db

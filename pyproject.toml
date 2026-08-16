@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphkb"
+version = "0.1.0"
+description = "Transparent, editable personal knowledge base (IDSD slice-1)"
+requires-python = ">=3.10"
+dependencies = [
+    "lightrag-hku",
+    "httpx",
+    "python-dotenv",
+]
+
+[tool.setuptools.packages.find]
+include = ["graphkb*"]
