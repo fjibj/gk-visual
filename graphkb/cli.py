@@ -57,6 +57,8 @@ async def _ingest(path: str) -> int:
             print(f"  + {e}")
     else:
         print("new_entities: 无（本次无新增，实体均与已有同名对齐）")
+    if result.lost_entities:
+        print(f"⚠ 增量丢失 {len(result.lost_entities)} 个实体（图可能被重建）: {result.lost_entities}")
     if result.entity_count == 0:
         print("⚠ 未抽取到实体（文档可能无可抽取内容）")
     print("entities:")
@@ -91,6 +93,8 @@ async def _merge(sources: list[str], target: str) -> int:
     print(f"merged into: {result.target_entity}")
     print(f"deleted_entities: {result.deleted_entities}")
     print(f"relationships_transferred: {result.relationships_transferred}")
+    if result.sources_remaining:
+        print(f"⚠ 合并后源实体仍残留（半合并）: {result.sources_remaining}")
     print("target_final:")
     print(json.dumps(result.target_final, ensure_ascii=False, indent=2))
     return 0

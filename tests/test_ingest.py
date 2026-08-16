@@ -82,3 +82,30 @@ def test_ingest_document_new_entities_diff():
     result = asyncio.run(ingest_document(_GrowingRag(), "任意文本"))
     assert result.new_entities == ["李四"]
     assert result.entity_count == 2
+
+
+class _RebuildingGraph:
+    def __init__(self):
+        self.nodes = [{"entity_id": "张三"}]
+
+    async def get_all_nodes(self):
+        return self.nodes
+
+    async def get_all_edges(self):
+        return [{"source": "张三", "target": "字节跳动"}]
+
+
+class _RebuildingRag:
+    def __init__(self):
+        self.chunk_entity_relation_graph = _RebuildingGraph()
+
+    async def ainsert(self, text):
+        # 模拟重建：旧图被清空，只留新实体
+        self.chunk_entity_relation_graph.nodes = [{"entity_id": "李四"}]
+        return "doc-2"
+
+
+def test_ingest_document_lost_entities_detected():
+    """模拟重建（旧实体消失）→ lost_entities 应非空，显式暴露增量丢失。"""
+    result = asyncio.run(ingest_document(_RebuildingRag(), "任意文本"))
+    assert result.lost_entities == ["张三"]

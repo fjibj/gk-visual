@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .ingest import _entity_name
+
 
 @dataclass
 class MergeResult:
@@ -11,6 +13,7 @@ class MergeResult:
     deleted_entities: list[str] = field(default_factory=list)
     relationships_transferred: int = 0
     target_final: dict = field(default_factory=dict)
+    sources_remaining: list[str] = field(default_factory=list)
 
 
 async def _relations_of(rag, entity: str) -> set[tuple[str, str]]:
@@ -30,7 +33,8 @@ async def merge_entities(
 ) -> MergeResult:
     """把多个源实体合并到目标实体，复用 LightRAG ``amerge_entities``。
 
-    返回结构化结果：删除的源、转移到目标的关系数、目标终态。
+    返回结构化结果：删除的源、转移到目标的关系数、目标终态，以及
+    ``sources_remaining``（合并后仍残留在图中的源实体，正常应为空，非空即半合并）。
     """
     before_target = await _relations_of(rag, target_entity)
 
@@ -42,9 +46,16 @@ async def merge_entities(
     after_target = await _relations_of(rag, target_entity)
     transferred = len(after_target - before_target)
 
+    nodes = await rag.chunk_entity_relation_graph.get_all_nodes()
+    remaining_names = {_entity_name(n) for n in nodes}
+    sources_remaining = sorted(
+        s for s in source_entities if s != target_entity and s in remaining_names
+    )
+
     return MergeResult(
         target_entity=str(result.get("entity_name") or target_entity),
         deleted_entities=list(source_entities),
         relationships_transferred=transferred,
         target_final=dict(result.get("graph_data") or {}),
+        sources_remaining=sources_remaining,
     )
