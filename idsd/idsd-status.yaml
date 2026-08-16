@@ -56,7 +56,8 @@ steps:
     note: slice-4-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-4-v1/
   - id: 7
     name: 记录检查点
-    status: pending
+    status: completed
+    artifact: idsd/checkpoints/slice-4-graph-edit-v1.md
   - id: 8
     name: 用户验收
     status: pending
