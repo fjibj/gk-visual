@@ -48,10 +48,12 @@ steps:
     artifact: idsd/plans/feature-list-slice-3-retrieval-transparency.json
   - id: 5
     name: 逐切片构建
-    status: pending
+    status: completed
+    note: 子切片①逐项分数 _score_trace（复用向量库 query）②CLI 透明窗渲染 render.py ③pytest（21 passed）+ conftest mkdtemp 修复
   - id: 6
     name: 运行 Holdout 评估
-    status: pending
+    status: completed
+    note: slice-3-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-3-v1/
   - id: 7
     name: 记录检查点
     status: pending
@@ -61,7 +63,7 @@ steps:
 
 summary:
   total_steps: 8
-  completed: 4
+  completed: 6
   in_progress: 0
-  pending: 4
+  pending: 2
   failed: 0

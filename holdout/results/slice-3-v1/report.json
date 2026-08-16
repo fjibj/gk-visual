@@ -1,0 +1,57 @@
+{
+  "version": "slice-3-v1",
+  "timestamp": "2026-08-16T18:15:10.198947",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "category": "success",
+      "name": "s1_render_lists_hits",
+      "expectation": "Success 1: trace 有命中时渲染列出命中实体/关系（不是黑盒答案）",
+      "passed": true,
+      "detail": "问题：谁创立了字节跳动？ | 答案：张一鸣 |  | ── 检索关键词 ── |   高层: ['创始人'] |   低层: ['字节跳动'] |  | ── 命中实体 (1) ── |   ████████░░ 0.800  字节跳动（organization） |  | ── 命中关系 (1) ── |   ███████░░░ 0.670  字节跳动 → 张一鸣 |  | ── 依据块 (0) ──"
+    },
+    {
+      "category": "success",
+      "name": "s2_scores_present",
+      "expectation": "Success 2: 命中实体有真实余弦分数（0~1）",
+      "passed": true,
+      "detail": "scores=[0.8038913607597351, None]"
+    },
+    {
+      "category": "success",
+      "name": "s3_dual_level_visible",
+      "expectation": "Success 3: 渲染展示 dual-level 链条（高层关键词→低层实体→依据块）",
+      "passed": true,
+      "detail": "问题：q | 答案：a |  | ── 检索关键词 ── |   高层: ['创始人'] |   低层: ['字节跳动'] |  | ── 命中实体 (1) ── |   █████░░░░░ 0.500  字节跳动 |  | ── 命中关系 (0) ── |  | ── 依据块 (1) ── |   · 块内容"
+    },
+    {
+      "category": "failure",
+      "name": "f1_no_score_no_fabricate",
+      "expectation": "Failure 1: 分数拿不到时如实标注无分数，不编造一个数字",
+      "passed": true,
+      "detail": "问题：q | 答案：a |  | ── 检索关键词 ── |   高层: （无） |   低层: （无） |  | ── 命中实体 (1) ── |   ·········· 无分数  字节跳动 |  | ── 命中关系 (1) ── |   ·········· 无分数  a → b |  | ── 依据块 (0) ──"
+    },
+    {
+      "category": "failure",
+      "name": "f2_empty_trace_shows_miss",
+      "expectation": "Failure 2: trace 空时如实显示未命中，不画假命中路径",
+      "passed": true,
+      "detail": "问题：q | 答案：未找到相关实体。 |  | （未命中：图中没有命中任何实体或关系，未生成检索路径。）"
+    },
+    {
+      "category": "boundary",
+      "name": "b1_missing_score_no_crash",
+      "expectation": "Boundary 1: 命中实体查不到分数时标注无分数、不崩溃",
+      "passed": true,
+      "detail": "score=None"
+    },
+    {
+      "category": "boundary",
+      "name": "b2_low_score_shown",
+      "expectation": "Boundary 2: 低分照实显示，不隐藏不夸大",
+      "passed": true,
+      "detail": "问题：q | 答案：a |  | ── 检索关键词 ── |   高层: （无） |   低层: （无） |  | ── 命中实体 (1) ── |   ░░░░░░░░░░ 0.010  X |  | ── 命中关系 (0) ── |  | ── 依据块 (0) ──"
+    }
+  ]
+}
