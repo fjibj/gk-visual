@@ -208,8 +208,10 @@ function showNodePanel(id: string) {
       <textarea id="f-desc">${escapeHtml(node.description)}</textarea>
     `,
     `
-      <button class="primary" id="a-save">保存</button>
-      <button class="danger" id="a-delete">删除</button>
+      <div class="row">
+        <button class="primary" id="a-save">保存</button>
+        <button class="danger" id="a-delete">删除</button>
+      </div>
     `,
   )
   document.getElementById('a-save')!.onclick = saveEntity
@@ -230,8 +232,10 @@ function showEdgePanel(source: string, target: string) {
       <input id="f-keywords" value="${escapeHtml(edge.keywords)}" />
     `,
     `
-      <button class="primary" id="a-save">保存</button>
-      <button class="danger" id="a-delete">删除</button>
+      <div class="row">
+        <button class="primary" id="a-save">保存</button>
+        <button class="danger" id="a-delete">删除</button>
+      </div>
     `,
   )
   document.getElementById('a-save')!.onclick = saveRelation
@@ -252,7 +256,7 @@ function showNewEntityPanel() {
       <label>描述</label>
       <textarea id="f-desc"></textarea>
     `,
-    `<button class="primary" id="a-create">创建</button>`,
+    `<div class="row"><button class="primary" id="a-create">创建</button></div>`,
   )
   document.getElementById('a-create')!.onclick = createEntity
 }
@@ -271,7 +275,7 @@ function showNewRelationPanel() {
       <label>关键词</label>
       <input id="f-keywords" />
     `,
-    `<button class="primary" id="a-create">创建</button>`,
+    `<div class="row"><button class="primary" id="a-create">创建</button></div>`,
   )
   document.getElementById('a-create')!.onclick = createRelation
 }
@@ -281,8 +285,9 @@ function showMergePanel() {
   const checkboxes = currentData.nodes
     .map(
       (n) =>
-        `<label style="display:flex;align-items:center;gap:6px;margin:2px 0;font-size:13px">
-          <input type="checkbox" class="m-src" value="${escapeHtml(n.id)}" /> ${escapeHtml(n.id)}
+        `<label class="check-item">
+          <input type="checkbox" class="m-src" value="${escapeHtml(n.id)}" />
+          <span>${escapeHtml(n.id)}</span>
         </label>`,
     )
     .join('')
@@ -290,11 +295,11 @@ function showMergePanel() {
     '合并实体（源并入目标）',
     `
       <label>选择要合并的源实体（可多选，合并后删除）</label>
-      <div id="m-sources">${checkboxes}</div>
+      <div class="check-list" id="m-sources">${checkboxes}</div>
       <label>目标实体</label>
       <select id="f-target">${entityOptions()}</select>
     `,
-    `<button class="primary" id="a-merge">合并</button>`,
+    `<div class="row"><button class="primary" id="a-merge">合并</button></div>`,
   )
   document.getElementById('a-merge')!.onclick = doMerge
 }
