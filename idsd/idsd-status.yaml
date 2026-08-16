@@ -28,6 +28,10 @@ slices:
     name: 编辑回路（编辑 → 检索随之变化）
     status: pending
     depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit]
+  - id: slice-6-document-lifecycle
+    name: 文档生命周期闭环（上传→图、列表、删除→图收敛）
+    status: pending
+    depends_on: [slice-1-doc-to-graph, slice-4-graph-edit]
 
 steps:
   - id: 1
