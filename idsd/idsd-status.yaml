@@ -4,7 +4,7 @@
 workflow:
   type: planned-build
   project: graph-knowledge-base
-  current_slice: slice-4-graph-edit
+  current_slice: slice-5-edit-loop
   status: in_progress
 
 slices:
@@ -22,7 +22,7 @@ slices:
     depends_on: [slice-1-doc-to-graph, slice-2-incremental-merge]
   - id: slice-4-graph-edit
     name: 图谱可视化 + 手工编辑
-    status: in_progress
+    status: completed
     depends_on: [slice-1-doc-to-graph]
   - id: slice-5-edit-loop
     name: 编辑回路（编辑 → 检索随之变化）
@@ -64,11 +64,12 @@ steps:
     artifact: idsd/checkpoints/slice-4-graph-edit-v1.md
   - id: 8
     name: 用户验收
-    status: pending
+    status: completed
+    note: 2026-08-16 用户确认合并面板修复后验收通过，S4 收官
 
 summary:
   total_steps: 8
-  completed: 6
+  completed: 8
   in_progress: 0
-  pending: 2
+  pending: 0
   failed: 0
