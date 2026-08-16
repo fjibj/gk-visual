@@ -44,28 +44,32 @@ steps:
     artifact: idsd/intents/slice-5-edit-loop/expectations.md
   - id: 3
     name: 组装 Context
-    status: in_progress
+    status: completed
     artifact: idsd/context/context-bundle-slice-5-edit-loop.md
+    note: spike 实证 4 验收点回路闭环；孤立实体不召回是 LightRAG 固有边界
   - id: 4
     name: 规划实现路径
-    status: pending
+    status: completed
     artifact: idsd/plans/feature-list-slice-5-edit-loop.json
   - id: 5
     name: 逐切片构建
-    status: pending
+    status: completed
+    note: 无新业务代码；tests/test_edit_loop.py 4 用例锁定编辑→图数据层（离线 mock）
   - id: 6
     name: 运行 Holdout 评估
-    status: pending
+    status: completed
+    note: slice-5-v1 判卷 7/7 通过（4成功/1失败/2边界），写档 holdout/results/slice-5-v1/
   - id: 7
     name: 记录检查点
-    status: pending
+    status: completed
+    artifact: idsd/checkpoints/slice-5-edit-loop-v1.md
   - id: 8
     name: 用户验收
     status: pending
 
 summary:
   total_steps: 8
-  completed: 2
-  in_progress: 1
-  pending: 5
+  completed: 7
+  in_progress: 0
+  pending: 1
   failed: 0
