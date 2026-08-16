@@ -5,12 +5,12 @@ workflow:
   type: planned-build
   project: graph-knowledge-base
   current_slice: slice-1-doc-to-graph
-  status: in_progress
+  status: completed
 
 slices:
   - id: slice-1-doc-to-graph
     name: 文档→图 + 可检索（含 trace 暴露口）
-    status: in_progress
+    status: completed
     depends_on: []
   - id: slice-2-incremental-merge
     name: 增量合并 + 实体对齐
@@ -60,11 +60,12 @@ steps:
     artifact: idsd/checkpoints/slice-1-doc-to-graph-v1.md
   - id: 8
     name: 用户验收
-    status: pending
+    status: completed
+    note: 用户 2026-08-16 自测 doctor/ingest/query/pytest/evaluate 全通过，验收通过
 
 summary:
   total_steps: 8
-  completed: 7
+  completed: 8
   in_progress: 0
-  pending: 1
+  pending: 0
   failed: 0
