@@ -15,6 +15,9 @@ data/
 rag_storage/
 inputs/
 
+# pytest basetemp（项目内临时目录）
+.pytest_tmp/
+
 # OS
 .DS_Store
 Thumbs.db

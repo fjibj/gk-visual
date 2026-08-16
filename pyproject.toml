@@ -21,3 +21,5 @@ include = ["graphkb*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Windows 沙箱下默认 temp 目录的 symlink 清理会 PermissionError，改用项目内 basetemp 规避
+addopts = "--basetemp=.pytest_tmp"

@@ -55,3 +55,30 @@ def test_ingest_document_extraction_keys():
     assert result.relation_count == 1
     assert result.entities == ["张三"]
     assert result.relations == [("张三", "字节跳动")]
+
+
+class _GrowingGraph:
+    def __init__(self):
+        self.nodes = [{"entity_id": "张三"}]
+
+    async def get_all_nodes(self):
+        return self.nodes
+
+    async def get_all_edges(self):
+        return [{"source": "张三", "target": "字节跳动"}]
+
+
+class _GrowingRag:
+    def __init__(self):
+        self.chunk_entity_relation_graph = _GrowingGraph()
+
+    async def ainsert(self, text):
+        self.chunk_entity_relation_graph.nodes.append({"entity_id": "李四"})
+        return "doc-2"
+
+
+def test_ingest_document_new_entities_diff():
+    """摄入后 new_entities = 与摄入前的差集（新增名单），锁定增量可见。"""
+    result = asyncio.run(ingest_document(_GrowingRag(), "任意文本"))
+    assert result.new_entities == ["李四"]
+    assert result.entity_count == 2
