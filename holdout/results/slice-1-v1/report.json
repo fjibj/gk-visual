@@ -1,0 +1,57 @@
+{
+  "version": "slice-1-v1",
+  "timestamp": "2026-08-16T16:29:39.881193",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "category": "success",
+      "name": "s1_graph_nonempty",
+      "expectation": "Success 1: 建图后实体数>0 且关系数>0",
+      "passed": true,
+      "detail": "entities=3 relations=2"
+    },
+    {
+      "category": "success",
+      "name": "s2_answer_traceable",
+      "expectation": "Success 2: 返回答案，且答案有 trace 背书（trace_hit=True，非凭空）",
+      "passed": true,
+      "detail": "answer='mock-response' trace_hit=True"
+    },
+    {
+      "category": "success",
+      "name": "s3_trace_lists_real_hits",
+      "expectation": "Success 3: trace 列出命中实体/关系，且均为图中真实存在的（不编造）",
+      "passed": true,
+      "detail": "entities=['字节跳动', '北京', '张三'] relations=[('字节跳动', '张三'), ('北京', '字节跳动')]"
+    },
+    {
+      "category": "failure",
+      "name": "f1_empty_trace_no_blackbox",
+      "expectation": "Failure 1: trace 为空时不返回黑盒答案（返回'未找到'）",
+      "passed": true,
+      "detail": "answer='未找到相关实体（图中未命中任何实体或关系）。'"
+    },
+    {
+      "category": "failure",
+      "name": "f2_no_entity_doc",
+      "expectation": "Failure 2: 无实体文档得體处理，实体数为0（不崩溃）",
+      "passed": true,
+      "detail": "entity_count=0 relation_count=0"
+    },
+    {
+      "category": "boundary",
+      "name": "b1_nonexistent_entity",
+      "expectation": "Boundary 1: 图中不存在的实体 → 未命中 + '未找到'",
+      "passed": true,
+      "detail": "trace_hit=False answer='未找到相关实体（图中未命中任何实体或关系）。'"
+    },
+    {
+      "category": "boundary",
+      "name": "b2_repeated_entity_no_dupes",
+      "expectation": "Boundary 2: 同一实体反复提及不产生重复节点",
+      "passed": true,
+      "detail": "张三节点数=1 总节点数=2"
+    }
+  ]
+}

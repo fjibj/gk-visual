@@ -50,6 +50,8 @@ async def _ingest(path: str) -> int:
     print(f"doc_id: {result.doc_id}")
     print(f"entity_count: {result.entity_count}")
     print(f"relation_count: {result.relation_count}")
+    if result.entity_count == 0:
+        print("⚠ 未抽取到实体（文档可能无可抽取内容）")
     print("entities:")
     for e in result.entities:
         print(f"  - {e}")
@@ -67,6 +69,7 @@ async def _query(question: str) -> int:
 
     print(f"question: {result.question}")
     print(f"answer: {result.answer}")
+    print(f"trace_hit: {result.trace_hit}")
     print("trace:")
     print(json.dumps(result.trace, ensure_ascii=False, indent=2))
     return 0

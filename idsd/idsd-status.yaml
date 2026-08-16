@@ -52,7 +52,8 @@ steps:
     note: 子切片①②③④ 全部完成并验证（骨架+provider抽象 / 文档→图 / 检索+trace / CLI+pytest 11测试通过）
   - id: 6
     name: 运行 Holdout 评估
-    status: pending
+    status: completed
+    note: slice-1-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-1-v1/
   - id: 7
     name: 记录检查点
     status: pending
@@ -62,7 +63,7 @@ steps:
 
 summary:
   total_steps: 8
-  completed: 5
+  completed: 6
   in_progress: 0
-  pending: 3
+  pending: 2
   failed: 0
