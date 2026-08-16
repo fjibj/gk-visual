@@ -57,6 +57,55 @@ def _build_trace(data: dict, metadata: dict) -> dict[str, Any]:
     }
 
 
+def _safe_score(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _score_trace(rag, question: str, trace: dict) -> dict:
+    """薄 instrumentation：对命中实体/关系补余弦分数（复用向量库 query，不重写检索）。
+
+    - 实体：用 entity_name 做 key，把 entities_vdb.query 的 distance 填回 trace。
+    - 关系：用 tuple(sorted((src, tgt))) 做 key（向量库存 normalized 顺序），同理填回。
+    - 查询异常/查不到 → 该分数保持 None（诚实降级，绝不编造）。
+    """
+    entities = trace.get("entities", [])
+    relationships = trace.get("relationships", [])
+
+    if entities:
+        try:
+            results = await rag.entities_vdb.query(question, top_k=max(len(entities), 1))
+        except Exception:
+            results = []
+        ent_scores = {
+            str(r.get("entity_name")): _safe_score(r.get("distance"))
+            for r in results
+            if r.get("entity_name") is not None
+        }
+        for e in entities:
+            e["score"] = ent_scores.get(e.get("name"))
+
+    if relationships:
+        try:
+            results = await rag.relationships_vdb.query(question, top_k=max(len(relationships), 1))
+        except Exception:
+            results = []
+        rel_scores = {}
+        for r in results:
+            s, t = r.get("src_id"), r.get("tgt_id")
+            if s is not None and t is not None:
+                key = tuple(sorted((str(s), str(t))))
+                rel_scores[key] = _safe_score(r.get("distance"))
+        for r in relationships:
+            s, t = r.get("src"), r.get("tgt")
+            key = tuple(sorted((str(s), str(t))))
+            r["score"] = rel_scores.get(key)
+
+    return trace
+
+
 async def query(
     rag,
     question: str,
@@ -84,6 +133,7 @@ async def query(
 
     if status == "success":
         trace = _build_trace(data, metadata)
+        trace = await _score_trace(rag, question, trace)
     else:
         # 无结果（failure_reason == "no_results"）→ 如实报告未命中，不报错不编造
         trace = {
