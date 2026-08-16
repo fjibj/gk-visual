@@ -1,0 +1,57 @@
+{
+  "version": "slice-2-v1",
+  "timestamp": "2026-08-16T17:53:18.909990",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "category": "success",
+      "name": "s1_incremental_accumulates",
+      "expectation": "Success 1: 第二篇并入后图累积（并集），第一篇实体不消失",
+      "passed": true,
+      "detail": "entities=['北京', '字节跳动', '张三', '李四']"
+    },
+    {
+      "category": "success",
+      "name": "s2_same_name_single_node",
+      "expectation": "Success 2: 同名实体（字节跳动）跨批次合并为一个节点",
+      "passed": true,
+      "detail": "字节跳动出现 1 次，全图 ['北京', '字节跳动', '张三', '李四']"
+    },
+    {
+      "category": "success",
+      "name": "s3_merge_visible",
+      "expectation": "Success 3: 显式合并变体后源删除、关系转移到目标、结果可见",
+      "passed": true,
+      "detail": "transferred=1 entities=['北京', '字节跳动']"
+    },
+    {
+      "category": "failure",
+      "name": "f1_rebuild_detected",
+      "expectation": "Failure 1: 摄入后旧实体消失（重建）→ lost_entities 非空，显式暴露",
+      "passed": true,
+      "detail": "lost_entities=['张三']"
+    },
+    {
+      "category": "failure",
+      "name": "f2_half_merge_detected",
+      "expectation": "Failure 2: 合并后源实体残留（半合并）→ sources_remaining 非空，显式暴露",
+      "passed": true,
+      "detail": "sources_remaining=['张三']"
+    },
+    {
+      "category": "boundary",
+      "name": "b1_merge_nonexistent",
+      "expectation": "Boundary 1: 合并不存在的实体，图保持不变、不崩溃",
+      "passed": true,
+      "detail": "raised=True before=['ByteDance', '北京', '字节跳动'] after=['ByteDance', '北京', '字节跳动']"
+    },
+    {
+      "category": "boundary",
+      "name": "b2_variant_not_merged",
+      "expectation": "Boundary 2: 变体不显式合并时保持原样（ByteDance 与 字节跳动 并存）",
+      "passed": true,
+      "detail": "entities=['ByteDance', '北京', '字节跳动']"
+    }
+  ]
+}

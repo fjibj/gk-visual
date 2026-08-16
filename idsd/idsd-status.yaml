@@ -48,10 +48,12 @@ steps:
     artifact: idsd/plans/feature-list-slice-2-incremental-merge.json
   - id: 5
     name: 逐切片构建
-    status: pending
+    status: completed
+    note: 子切片①增量摄入 diff（new/lost_entities）②显式合并（merge_entities 复用 amerge_entities）③pytest（15 passed）+ 半合并/重建检测字段
   - id: 6
     name: 运行 Holdout 评估
-    status: pending
+    status: completed
+    note: slice-2-v1 判卷 7/7 通过（3成功/2失败/2边界），写档 holdout/results/slice-2-v1/
   - id: 7
     name: 记录检查点
     status: pending
@@ -61,7 +63,7 @@ steps:
 
 summary:
   total_steps: 8
-  completed: 4
+  completed: 6
   in_progress: 0
-  pending: 4
+  pending: 2
   failed: 0
