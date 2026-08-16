@@ -1,8 +1,12 @@
-"""文档摄入：单篇文本 → LightRAG 图，返回实体/关系计数。"""
+"""文档摄入：单篇文本 → LightRAG 图，返回实体/关系计数 + 本次新增实体。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+
+def _entity_name(node) -> str:
+    return str(node.get("entity_id") or node.get("id") or node)
 
 
 @dataclass
@@ -12,21 +16,28 @@ class IngestResult:
     relation_count: int = 0
     entities: list[str] = field(default_factory=list)
     relations: list[tuple[str, str]] = field(default_factory=list)
+    new_entities: list[str] = field(default_factory=list)
 
 
-async def ingest_document(rag, text: str, doc_id: str | None = None) -> IngestResult:
-    """把单篇文本摄入 LightRAG，返回构图结果（含实体/关系计数）。
+async def ingest_document(rag, text: str) -> IngestResult:
+    """把单篇文本增量摄入 LightRAG，返回构图结果。
 
-    doc_id 参数暂未使用（LightRAG 的 ainsert 对单篇文本自动分块；跨文档去重交给 S2）。
+    - 增量：多次调用累积、不重建整库（LightRAG ainsert 现成能力）。
+    - 对齐：同名实体跨文档由 LightRAG 自动合并为单节点；变体实体靠
+      ``merge_entities``（graphkb/merge.py）显式合并。
+    - ``new_entities``：本次摄入新增的实体名（与摄入前差集），让"增量并入"可见。
     """
+    graph = rag.chunk_entity_relation_graph
+    before = {_entity_name(n) for n in await graph.get_all_nodes()}
+
     result_id = await rag.ainsert(text)
 
-    graph = rag.chunk_entity_relation_graph
     nodes = await graph.get_all_nodes()
     edges = await graph.get_all_edges()
 
-    entities = [str(n.get("entity_id") or n.get("id") or n) for n in nodes]
+    entities = [_entity_name(n) for n in nodes]
     relations = [(str(e.get("source", "")), str(e.get("target", ""))) for e in edges]
+    new_entities = sorted(set(entities) - before)
 
     return IngestResult(
         doc_id=str(result_id),
@@ -34,4 +45,5 @@ async def ingest_document(rag, text: str, doc_id: str | None = None) -> IngestRe
         relation_count=len(edges),
         entities=entities,
         relations=relations,
+        new_entities=new_entities,
     )
