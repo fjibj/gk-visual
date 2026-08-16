@@ -73,9 +73,31 @@ body {
 }
 
 #panel h2 {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 16px;
   word-break: break-all;
+}
+
+#panel .panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+#panel #btn-close-panel {
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: #57606a;
+  padding: 0 4px;
+}
+
+#panel #btn-close-panel:hover {
+  color: #1f2328;
 }
 
 #panel label {

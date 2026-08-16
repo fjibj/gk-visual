@@ -1,6 +1,9 @@
 import cytoscape from 'cytoscape'
+import coseBilkent from 'cytoscape-cose-bilkent'
 import './style.css'
 import { api, GraphData } from './api'
+
+cytoscape.use(coseBilkent)
 
 const TYPE_COLORS: Record<string, string> = {
   person: '#ff9f43',
@@ -25,29 +28,40 @@ const cy = cytoscape({
         color: '#1f2328',
         'text-valign': 'bottom',
         'text-halign': 'center',
-        'font-size': '12',
+        'font-size': '11',
         'text-margin-y': 4,
-        width: '36',
-        height: '36',
+        width: '32',
+        height: '32',
         'text-wrap': 'wrap',
-        'text-max-width': '90',
+        'text-max-width': '80',
       },
     },
     {
       selector: 'edge',
       style: {
-        width: '2',
+        width: '1.5',
         'line-color': '#c8ced6',
         'target-arrow-color': '#c8ced6',
         'target-arrow-shape': 'triangle',
         'curve-style': 'bezier',
-        label: 'data(description)',
-        'font-size': '10',
+        label: (ele: any) =>
+          ele.hasClass('edge-hover') || ele.selected() ? String(ele.data('description')) : '',
+        'font-size': '9',
         color: '#57606a',
         'text-rotation': 'autorotate',
         'text-background-color': '#ffffff',
-        'text-background-opacity': 0.9,
+        'text-background-opacity': 0.95,
         'text-background-padding': '2',
+        'text-wrap': 'wrap',
+        'text-max-width': '90',
+      },
+    },
+    {
+      selector: 'edge.edge-hover',
+      style: {
+        width: '2.5',
+        'line-color': '#1f6feb',
+        'target-arrow-color': '#1f6feb',
       },
     },
     {
@@ -59,15 +73,26 @@ const cy = cytoscape({
         'target-arrow-color': '#1f6feb',
       },
     },
+    {
+      selector: '.dimmed',
+      style: {
+        opacity: 0.2,
+      },
+    },
   ],
   layout: {
-    name: 'cose',
-    animate: false,
-    padding: 40,
-    nodeRepulsion: () => 6000,
-    idealEdgeLength: () => 100,
-  },
+    name: 'cose-bilkent',
+    nodeRepulsion: 8000,
+    idealEdgeLength: 120,
+    edgeElasticity: 0.45,
+    gravity: 0.25,
+    numIter: 2500,
+    tile: true,
+    padding: 50,
+  } as any,
 })
+
+;(window as any).__gkb_cy__ = cy
 
 let currentData: GraphData = { nodes: [], edges: [] }
 
@@ -105,12 +130,15 @@ function renderGraph(data: GraphData) {
   cy.add(nodes)
   cy.add(edges)
   cy.layout({
-    name: 'cose',
-    animate: false,
-    padding: 40,
-    nodeRepulsion: () => 6000,
-    idealEdgeLength: () => 100,
-  }).run()
+    name: 'cose-bilkent',
+    nodeRepulsion: 8000,
+    idealEdgeLength: 120,
+    edgeElasticity: 0.45,
+    gravity: 0.25,
+    numIter: 2500,
+    tile: true,
+    padding: 50,
+  } as any).run()
 }
 
 // ---- 详情面板 ----
@@ -131,6 +159,13 @@ function hidePanel() {
   selectedNodeId = ''
   selectedEdge = null
   cy.elements().unselect()
+  cy.elements().removeClass('dimmed')
+}
+
+function highlightNeighbors(ele: any) {
+  cy.elements().removeClass('dimmed')
+  const neighborhood = ele.closedNeighborhood()
+  cy.elements().difference(neighborhood).addClass('dimmed')
 }
 
 function showPanel(title: string, formHtml: string, actionsHtml: string) {
@@ -369,21 +404,39 @@ async function doMerge() {
 // ---- 事件绑定 ----
 
 cy.on('tap', 'node', (evt) => {
+  highlightNeighbors(evt.target)
   showNodePanel(String(evt.target.id()))
 })
 
 cy.on('tap', 'edge', (evt) => {
   const e = evt.target
+  highlightNeighbors(e)
   showEdgePanel(String(e.source().id()), String(e.target().id()))
 })
 
+cy.on('mouseover', 'edge', (evt) => {
+  evt.target.addClass('edge-hover')
+})
+
+cy.on('mouseout', 'edge', (evt) => {
+  evt.target.removeClass('edge-hover')
+})
+
 cy.on('tap', (evt) => {
-  if (evt.target === cy) hidePanel()
+  if (evt.target === cy) {
+    cy.elements().removeClass('dimmed')
+    hidePanel()
+  }
 })
 
 document.getElementById('btn-refresh')!.onclick = loadGraph
 document.getElementById('btn-add-entity')!.onclick = showNewEntityPanel
 document.getElementById('btn-add-relation')!.onclick = showNewRelationPanel
 document.getElementById('btn-merge')!.onclick = showMergePanel
+document.getElementById('btn-close-panel')!.onclick = hidePanel
+
+;(window as any).__gkb_showNodePanel__ = showNodePanel
+;(window as any).__gkb_showEdgePanel__ = showEdgePanel
+;(window as any).__gkb_data__ = () => currentData
 
 loadGraph()

@@ -9,7 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "cytoscape": "^3.34.1"
+    "cytoscape": "^3.34.1",
+    "cytoscape-cose-bilkent": "^4.1.0"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
