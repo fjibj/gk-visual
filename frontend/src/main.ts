@@ -17,6 +17,12 @@ function typeColor(t: string): string {
   return TYPE_COLORS[t] || TYPE_COLORS.other
 }
 
+function ageColor(age: number): string {
+  // 检索多轮颜色：最新（age=0）最深，历史越远越浅
+  const steps = ['#c81e2e', '#e05a6a', '#ec8d99', '#f6c5cd']
+  return steps[Math.min(Math.max(age, 0), steps.length - 1)]
+}
+
 const cy = cytoscape({
   container: document.getElementById('cy')!,
   style: [
@@ -79,6 +85,21 @@ const cy = cytoscape({
         opacity: 0.2,
       },
     },
+    {
+      selector: 'node.hit',
+      style: {
+        'border-width': 3,
+        'border-color': (ele: any) => ageColor(Number(ele.data('hitAge') ?? 0)),
+      },
+    },
+    {
+      selector: 'edge.hit',
+      style: {
+        width: 3,
+        'line-color': (ele: any) => ageColor(Number(ele.data('hitAge') ?? 0)),
+        'target-arrow-color': (ele: any) => ageColor(Number(ele.data('hitAge') ?? 0)),
+      },
+    },
   ],
   layout: {
     name: 'cose-bilkent',
@@ -95,6 +116,7 @@ const cy = cytoscape({
 ;(window as any).__gkb_cy__ = cy
 
 let currentData: GraphData = { nodes: [], edges: [] }
+const queryRounds: { entities: Set<string>; relationships: Set<string> }[] = []
 
 function setStatus(msg: string, isError = false) {
   const el = document.getElementById('status')!
@@ -139,6 +161,7 @@ function renderGraph(data: GraphData) {
     tile: true,
     padding: 50,
   } as any).run()
+  if (queryRounds.length > 0) renderQueryHighlight()
 }
 
 // ---- 详情面板 ----
@@ -483,6 +506,67 @@ async function deleteDocument(docId: string) {
   }
 }
 
+// ---- 检索（图上路径高亮 + 多轮颜色演进） ----
+
+async function doQuery() {
+  const q = (document.getElementById('query-input') as HTMLInputElement).value.trim()
+  if (!q) return setStatus('请输入检索问题', true)
+  try {
+    const r = await api.query(q)
+    const hitCount = r.trace.entities.length + r.trace.relationships.length
+    setStatus(`答案：${r.answer}（命中 ${hitCount} 项）`)
+    const entities = new Set(r.trace.entities.map((e) => e.name))
+    const relationships = new Set(r.trace.relationships.map((rel) => `${rel.src}||${rel.tgt}`))
+    queryRounds.unshift({ entities, relationships })
+    renderQueryHighlight()
+  } catch (err) {
+    setStatus(`检索失败: ${(err as Error).message}`, true)
+  }
+}
+
+function renderQueryHighlight() {
+  cy.elements().removeClass('dimmed').removeClass('hit')
+  cy.nodes().forEach((n) => {
+    n.data('hitAge', null)
+  })
+  cy.edges().forEach((e) => {
+    e.data('hitAge', null)
+  })
+  if (queryRounds.length === 0) return
+
+  const nodeAges = new Map<string, number>()
+  const edgeAges = new Map<string, number>()
+  queryRounds.forEach((round, i) => {
+    round.entities.forEach((name) => {
+      if (!nodeAges.has(name)) nodeAges.set(name, i)
+    })
+    round.relationships.forEach((key) => {
+      if (!edgeAges.has(key)) edgeAges.set(key, i)
+    })
+  })
+
+  cy.nodes().forEach((n) => {
+    const age = nodeAges.get(String(n.id()))
+    if (age !== undefined) {
+      n.addClass('hit')
+      n.data('hitAge', age)
+    } else {
+      n.addClass('dimmed')
+    }
+  })
+  cy.edges().forEach((e) => {
+    const key = `${e.source().id()}||${e.target().id()}`
+    const rev = `${e.target().id()}||${e.source().id()}`
+    const age = edgeAges.get(key) ?? edgeAges.get(rev)
+    if (age !== undefined) {
+      e.addClass('hit')
+      e.data('hitAge', age)
+    } else {
+      e.addClass('dimmed')
+    }
+  })
+}
+
 // ---- 事件绑定 ----
 
 cy.on('tap', 'node', (evt) => {
@@ -516,6 +600,10 @@ document.getElementById('btn-add-entity')!.onclick = showNewEntityPanel
 document.getElementById('btn-add-relation')!.onclick = showNewRelationPanel
 document.getElementById('btn-merge')!.onclick = showMergePanel
 document.getElementById('btn-docs')!.onclick = showDocumentsPanel
+document.getElementById('btn-query')!.onclick = doQuery
+document.getElementById('query-input')!.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') doQuery()
+})
 document.getElementById('btn-close-panel')!.onclick = hidePanel
 
 window.addEventListener('resize', () => {

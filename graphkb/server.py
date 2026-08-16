@@ -21,6 +21,7 @@ from .config import load_config
 from .documents import list_documents, upsert_document
 from .ingest import _entity_name
 from .merge import merge_entities
+from .query import query as run_query
 from .rag import init_rag
 
 
@@ -227,6 +228,13 @@ def create_app(config=None) -> FastAPI:
         if result.status != "success":
             raise HTTPException(status_code=404, detail=result.message or f"文档不存在: {doc_id}")
         return {"doc_id": doc_id, "status": result.status}
+
+    # ---- 检索 -------
+
+    @app.get("/api/query")
+    async def query_endpoint(question: str, request: Request):
+        result = await run_query(request.app.state.rag, question)
+        return {"answer": result.answer, "trace": result.trace, "trace_hit": result.trace_hit}
 
     # ---- 静态前端托管 ----
 

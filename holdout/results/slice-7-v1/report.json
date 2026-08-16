@@ -1,0 +1,57 @@
+{
+  "version": "slice-7-v1",
+  "timestamp": "2026-08-17T00:55:35.188588",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "category": "success",
+      "name": "s1_query_returns_structure",
+      "expectation": "Success 1: /api/query 返回 answer/trace/trace_hit 结构",
+      "passed": true,
+      "detail": "keys=['answer', 'trace', 'trace_hit']"
+    },
+    {
+      "category": "success",
+      "name": "s2_trace_shape_for_highlight",
+      "expectation": "Success 2: trace 含 entities/relationships/chunks 且为 list",
+      "passed": true,
+      "detail": "trace keys=['chunks', 'entities', 'keywords', 'processing_info', 'query_mode', 'relationships']"
+    },
+    {
+      "category": "success",
+      "name": "s3_no_hit_reports_not_found",
+      "expectation": "Success 3: 未命中时 trace_hit=false 且答案含「未找到」",
+      "passed": true,
+      "detail": "trace_hit=False answer='未找到相关实体（图中未命中任何实体或关系）。'"
+    },
+    {
+      "category": "success",
+      "name": "s4_query_is_readonly",
+      "expectation": "Success 4: 检索不改变图（只读）",
+      "passed": true,
+      "detail": "检索前后图一致=True"
+    },
+    {
+      "category": "failure",
+      "name": "f1_missing_question_rejected",
+      "expectation": "Failure 1: 缺 question 参数被拒绝",
+      "passed": true,
+      "detail": "status=422"
+    },
+    {
+      "category": "boundary",
+      "name": "b1_empty_question_ok",
+      "expectation": "Boundary 1: 空问题得体返回，不崩溃",
+      "passed": true,
+      "detail": "status=200"
+    },
+    {
+      "category": "boundary",
+      "name": "b2_query_health_coexist",
+      "expectation": "Boundary 2: /api/query 与 /api/health 共存",
+      "passed": true,
+      "detail": "health=200 query=200"
+    }
+  ]
+}

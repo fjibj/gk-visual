@@ -1,0 +1,29 @@
+{
+  "slice": "slice-7-retrieval-visualization",
+  "slices": [
+    {
+      "id": 1,
+      "name": "后端 /api/query 检索端点",
+      "description": "server.py 加 GET /api/query?question=...，复用 graphkb.query.query 返回 {answer, trace, trace_hit}，只读。",
+      "dependencies": [],
+      "estimated_minutes": 15,
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "前端检索框 + 图上路径高亮 + 多轮颜色演进",
+      "description": "frontend：工具栏检索框 + 检索按钮；提交后调 /api/query，把 trace 命中实体/关系在图谱高亮（未命中淡化）；连续多轮叠加，当前轮最深、历史逐轮变浅。",
+      "dependencies": [1],
+      "estimated_minutes": 40,
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "name": "pytest + holdout + 浏览器验证",
+      "description": "tests/test_server.py 加 /api/query 端点用例；holdout 7 场景测端点结构/未命中/缺参；前端高亮+多轮靠浏览器 + vision 复核。",
+      "dependencies": [1, 2],
+      "estimated_minutes": 30,
+      "status": "pending"
+    }
+  ]
+}

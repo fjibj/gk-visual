@@ -25,6 +25,34 @@ export interface DocumentInfo {
   relation_count: number
 }
 
+export interface TraceEntity {
+  name: string
+  type: string
+  description: string
+  score: number | null
+}
+
+export interface TraceRelation {
+  src: string
+  tgt: string
+  description: string
+  keywords: string
+  weight: number | null
+  score: number | null
+}
+
+export interface QueryTrace {
+  entities: TraceEntity[]
+  relationships: TraceRelation[]
+  chunks: { content: string; chunk_id: string }[]
+}
+
+export interface QueryResult {
+  answer: string
+  trace: QueryTrace
+  trace_hit: boolean
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init)
   if (!res.ok) {
@@ -95,4 +123,7 @@ export const api = {
       `/api/documents/${encodeURIComponent(docId)}`,
       { method: 'DELETE' },
     ),
+
+  query: (question: string) =>
+    request<QueryResult>(`/api/query?question=${encodeURIComponent(question)}`),
 }

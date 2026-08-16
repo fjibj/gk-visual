@@ -48,28 +48,31 @@ steps:
     artifact: idsd/intents/slice-7-retrieval-visualization/expectations.md
   - id: 3
     name: 组装 Context
-    status: in_progress
+    status: completed
     artifact: idsd/context/context-bundle-slice-7-retrieval-visualization.md
   - id: 4
     name: 规划实现路径
-    status: pending
+    status: completed
     artifact: idsd/plans/feature-list-slice-7-retrieval-visualization.json
   - id: 5
     name: 逐切片构建
-    status: pending
+    status: completed
+    note: server /api/query + 前端检索框/图上高亮/多轮颜色
   - id: 6
     name: 运行 Holdout 评估
-    status: pending
+    status: completed
+    note: slice-7-v1 判卷 7/7 通过（4成功/1失败/2边界）
   - id: 7
     name: 记录检查点
-    status: pending
+    status: completed
+    artifact: idsd/checkpoints/slice-7-retrieval-visualization-v1.md
   - id: 8
     name: 用户验收
     status: pending
 
 summary:
   total_steps: 8
-  completed: 2
-  in_progress: 1
-  pending: 5
+  completed: 7
+  in_progress: 0
+  pending: 1
   failed: 0

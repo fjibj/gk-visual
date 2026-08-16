@@ -102,3 +102,19 @@ def test_merge_entities(mock_config):
         assert r.status_code == 200
         g = client.get("/api/graph").json()
         assert [n["id"] for n in g["nodes"]] == ["目标"]
+
+
+def test_query_endpoint_returns_structure(mock_config):
+    with make_client(mock_config) as client:
+        r = client.get("/api/query", params={"question": "任意问题"})
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) >= {"answer", "trace", "trace_hit"}
+        assert isinstance(body["trace"], dict)
+        assert "entities" in body["trace"] and "relationships" in body["trace"]
+
+
+def test_query_missing_question(mock_config):
+    with make_client(mock_config) as client:
+        r = client.get("/api/query")
+        assert r.status_code == 422

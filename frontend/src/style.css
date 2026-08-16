@@ -45,6 +45,26 @@ body {
   background: #3a424b;
 }
 
+#toolbar .query-input {
+  flex: 1;
+  max-width: 320px;
+  padding: 6px 10px;
+  border: 1px solid #444c56;
+  border-radius: 6px;
+  background: #2d333b;
+  color: #fff;
+  font-size: 13px;
+}
+
+#toolbar .query-input::placeholder {
+  color: #8b949e;
+}
+
+#toolbar .query-input:focus {
+  outline: none;
+  border-color: #1f6feb;
+}
+
 #toolbar .status {
   margin-left: auto;
   color: #8b949e;
