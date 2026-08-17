@@ -36,6 +36,10 @@ slices:
     name: 检索可视化闭环（检索框 + 图上路径高亮 + 多轮颜色演进）
     status: in_progress
     depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit, slice-5-edit-loop]
+  - id: slice-8-document-ingestion-enhancement
+    name: 文档摄取增强（文件格式解析 + URL 抓取）
+    status: pending
+    depends_on: [slice-6-document-lifecycle]
 
 steps:
   - id: 1

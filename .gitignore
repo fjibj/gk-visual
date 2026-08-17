@@ -31,3 +31,6 @@ frontend/dist/
 
 # server 日志
 .server_logs/
+
+# spec-workflow 工具生成目录
+.spec-workflow/

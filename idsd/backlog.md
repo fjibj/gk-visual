@@ -58,3 +58,18 @@
 - **内容**：同 workspace（默认空）下，同进程顺序 init 多个 LightRAG 实例时，doc_status 等存储的全局缓存会跨实例泄漏（spike 复现：前一个场景的 sample2 残留在后一个场景的 doc_status 里）。
 - **修复**：`graphkb/rag.py` 透传 `workspace`，`Config.workspace` 默认空；测试/考卷用唯一 workspace 隔离。生产单实例不受影响。
 - **备注**：未来若在单进程内跑多库（多 working_dir），必须给每库设唯一 workspace。
+
+## 7. 结构化实体属性（key-value）
+
+- **状态**：保持现状（用户 2026-08-17 拍板「属性保持现状」）。
+- **内容**：LightRAG 实体只有 name/type/description 三字段（边只有 src/tgt/keywords/description/weight），无自定义 key-value 属性槽；「成立时间/员工数/总部地址」等属性被 LLM 揉进 description 自由文本（prompt 原文：`entity_description: ... attributes and activities`）。`utils_graph.py::acreate_entity` 只取 entity_type/description/source_id/file_path/created_at，其他字段丢弃。
+- **权衡**：description 承载属性 → 可检索、零成本，但不可结构化过滤/排序；结构化属性表 → 可过滤但违背约束 1（状态跑出 LightRAG）、不参与检索、需同步维护，属天花板。
+- **结论**：后置，除非出现明确的「按属性过滤/统计」场景。
+
+## 8. 文档摄取增强（文件格式 + URL 抓取）
+
+- **状态**：已立项 S8（用户 2026-08-17 拍板「S8 可以先立，等我验证完 S6、S7 之后再做」）。
+- **内容**：当前文档上传只支持粘贴纯文本；真实文件（docx/xlsx/pptx/pdf/txt/md）解析 + URL 抓取是缺口。
+- **优先级**：文件格式解析 = 主体先做（更安全更常用）；URL 抓取 = 后置子项（安全面大：SSRF/超时/大小限制/robots）。
+- **实现线索**：格式适配层只做「字节/URL → 纯文本」，下游复用 S6 `ingest_document` + `POST /api/documents`；解析用 python-docx/openpyxl/pypdf/python-pptx。
+- **详见**：`idsd/intents/slice-8-document-ingestion-enhancement/`。
