@@ -274,3 +274,71 @@ body {
   background: #cf222e;
   color: #fff;
 }
+
+/* ---- 检索答案面板 ---- */
+
+#answer-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 460px;
+  max-width: calc(100% - 24px);
+  max-height: 55%;
+  overflow-y: auto;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.18);
+  padding: 16px;
+}
+
+#answer-panel.hidden {
+  display: none;
+}
+
+#answer-panel .panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+#answer-panel h2 {
+  margin: 0;
+  font-size: 16px;
+  word-break: break-all;
+}
+
+#answer-panel #btn-close-answer {
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: #57606a;
+  padding: 0 4px;
+}
+
+#answer-panel #btn-close-answer:hover {
+  color: #1f2328;
+}
+
+#answer-body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #1f2328;
+  word-break: break-word;
+}
+
+#answer-body h3 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+
+#answer-body .hit-badge {
+  color: #1f6feb;
+  font-weight: 600;
+  margin-bottom: 8px;
+}

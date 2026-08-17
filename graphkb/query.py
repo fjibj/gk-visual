@@ -64,45 +64,75 @@ def _safe_score(value) -> float | None:
         return None
 
 
-async def _score_trace(rag, question: str, trace: dict) -> dict:
-    """薄 instrumentation：对命中实体/关系补余弦分数（复用向量库 query，不重写检索）。
+HIT_TOP_K = 5  # 可视化"命中"截断：只高亮向量检索最相关的 top_k 实体/关系
 
-    - 实体：用 entity_name 做 key，把 entities_vdb.query 的 distance 填回 trace。
-    - 关系：用 tuple(sorted((src, tgt))) 做 key（向量库存 normalized 顺序），同理填回。
-    - 查询异常/查不到 → 该分数保持 None（诚实降级，绝不编造）。
+
+async def _hit_trace(rag, question: str, trace: dict) -> dict:
+    """把 trace 的命中集合从「LightRAG 上下文子图」收敛为「向量检索 top_k」。
+
+    背景：aquery_data 的 data["entities"] 是发给 LLM 的上下文子图，包含命中实体
+    + 邻居扩散 + low-level chunk 关联，小图几乎=全图，直接据此高亮会「全图红色」。
+    这里复用与 LightRAG high-level 同源的 entities_vdb / relationships_vdb 向量检索
+    取 top_k，只保留真正命中的实体/关系，并从全图 trace 补回 type/description/
+    keywords/weight，同时填 score。查询异常/查不到 → 诚实降级（保留原集合，
+    score 为 None），绝不编造。
     """
-    entities = trace.get("entities", [])
-    relationships = trace.get("relationships", [])
+    full_entities = trace.get("entities", [])
+    full_relationships = trace.get("relationships", [])
+    ent_by_name = {str(e.get("name")): e for e in full_entities if e.get("name")}
+    rel_by_key = {}
+    for r in full_relationships:
+        s, t = r.get("src"), r.get("tgt")
+        if s and t:
+            rel_by_key[tuple(sorted((str(s), str(t))))] = r
 
-    if entities:
-        try:
-            results = await rag.entities_vdb.query(question, top_k=max(len(entities), 1))
-        except Exception:
-            results = []
-        ent_scores = {
-            str(r.get("entity_name")): _safe_score(r.get("distance"))
-            for r in results
-            if r.get("entity_name") is not None
-        }
-        for e in entities:
-            e["score"] = ent_scores.get(e.get("name"))
+    hit_entities = []
+    try:
+        results = await rag.entities_vdb.query(question, top_k=HIT_TOP_K)
+        for r in results:
+            name = r.get("entity_name")
+            if name is None:
+                continue
+            base = ent_by_name.get(str(name), {})
+            hit_entities.append(
+                {
+                    "name": name,
+                    "type": base.get("type") or r.get("entity_type"),
+                    "description": base.get("description") or r.get("description"),
+                    "score": _safe_score(r.get("distance")),
+                }
+            )
+    except Exception:
+        hit_entities = [{**e, "score": None} for e in full_entities]
 
-    if relationships:
-        try:
-            results = await rag.relationships_vdb.query(question, top_k=max(len(relationships), 1))
-        except Exception:
-            results = []
-        rel_scores = {}
+    hit_relationships = []
+    try:
+        results = await rag.relationships_vdb.query(question, top_k=HIT_TOP_K)
         for r in results:
             s, t = r.get("src_id"), r.get("tgt_id")
-            if s is not None and t is not None:
-                key = tuple(sorted((str(s), str(t))))
-                rel_scores[key] = _safe_score(r.get("distance"))
-        for r in relationships:
-            s, t = r.get("src"), r.get("tgt")
+            if s is None or t is None:
+                continue
             key = tuple(sorted((str(s), str(t))))
-            r["score"] = rel_scores.get(key)
+            base = rel_by_key.get(key, {})
+            hit_relationships.append(
+                {
+                    "src": s,
+                    "tgt": t,
+                    "description": base.get("description") or r.get("description"),
+                    "keywords": base.get("keywords") or r.get("keywords"),
+                    "weight": (
+                        base.get("weight")
+                        if base.get("weight") is not None
+                        else r.get("weight")
+                    ),
+                    "score": _safe_score(r.get("distance")),
+                }
+            )
+    except Exception:
+        hit_relationships = [{**r, "score": None} for r in full_relationships]
 
+    trace["entities"] = hit_entities
+    trace["relationships"] = hit_relationships
     return trace
 
 
@@ -133,7 +163,7 @@ async def query(
 
     if status == "success":
         trace = _build_trace(data, metadata)
-        trace = await _score_trace(rag, question, trace)
+        trace = await _hit_trace(rag, question, trace)
     else:
         # 无结果（failure_reason == "no_results"）→ 如实报告未命中，不报错不编造
         trace = {

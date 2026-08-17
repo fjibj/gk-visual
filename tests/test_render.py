@@ -1,10 +1,10 @@
-"""S3 测试：_score_trace 分数映射 + render 渲染输出（纯函数，确定性）。"""
+"""S3 测试：_hit_trace 命中收敛 + 分数映射 + render 渲染输出（纯函数，确定性）。"""
 
 from __future__ import annotations
 
 import asyncio
 
-from graphkb.query import QueryResult, _safe_score, _score_trace
+from graphkb.query import QueryResult, _safe_score, _hit_trace
 from graphkb.render import render
 
 
@@ -34,7 +34,7 @@ class _FakeRag:
         self.relationships_vdb = relationships_vdb or _FakeVdb([])
 
 
-def test_score_trace_maps_entities_and_relations():
+def test_hit_trace_converges_and_scores():
     rag = _FakeRag(
         entities_vdb=_FakeVdb(
             [
@@ -47,24 +47,43 @@ def test_score_trace_maps_entities_and_relations():
         ),
     )
     trace = {
-        "entities": [{"name": "字节跳动"}, {"name": "张三"}],
-        "relationships": [{"src": "字节跳动", "tgt": "张一鸣"}],
+        "entities": [
+            {"name": "字节跳动", "type": "organization", "description": "互联网公司"},
+            {"name": "张三", "type": "person", "description": "员工"},
+            {"name": "无关实体", "type": "other", "description": "噪声"},
+        ],
+        "relationships": [
+            {
+                "src": "字节跳动",
+                "tgt": "张一鸣",
+                "description": "创立",
+                "keywords": "创始人",
+                "weight": 2.0,
+            },
+            {"src": "无关A", "tgt": "无关B", "description": "x", "keywords": "", "weight": 1.0},
+        ],
     }
-    out = asyncio.run(_score_trace(rag, "q", trace))
+    out = asyncio.run(_hit_trace(rag, "q", trace))
 
+    # 收敛：只保留向量检索命中的实体（字节跳动、张三），无关实体被剔除
+    assert [e["name"] for e in out["entities"]] == ["字节跳动", "张三"]
     assert out["entities"][0]["score"] == 0.803
+    assert out["entities"][0]["type"] == "organization"  # 从全图 trace 补回
     assert out["entities"][1]["score"] == 0.30
-    # 关系用 sorted(src,tgt) 做 key：字节跳动↔张一鸣 两方向命中同一条
+    # 关系用 sorted(src,tgt) 做 key：字节跳动↔张一鸣 两方向命中同一条；无关关系被剔除
+    assert len(out["relationships"]) == 1
     assert out["relationships"][0]["score"] == 0.67
+    assert out["relationships"][0]["keywords"] == "创始人"
 
 
-def test_score_trace_degraded_on_error():
+def test_hit_trace_degraded_on_error():
     rag = _FakeRag(entities_vdb=_BoomVdb(), relationships_vdb=_BoomVdb())
     trace = {
         "entities": [{"name": "字节跳动"}],
         "relationships": [{"src": "字节跳动", "tgt": "张一鸣"}],
     }
-    out = asyncio.run(_score_trace(rag, "q", trace))
+    out = asyncio.run(_hit_trace(rag, "q", trace))
+    # 降级：保留原集合，score 为 None
     assert out["entities"][0]["score"] is None
     assert out["relationships"][0]["score"] is None
 

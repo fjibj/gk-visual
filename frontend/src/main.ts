@@ -481,6 +481,10 @@ async function uploadDocument() {
   const title = (document.getElementById('d-title') as HTMLInputElement).value.trim()
   const content = (document.getElementById('d-content') as HTMLTextAreaElement).value.trim()
   if (!content) return setStatus('文档内容不能为空', true)
+  const btn = document.getElementById('a-upload') as HTMLButtonElement
+  btn.disabled = true
+  btn.textContent = '解析中…'
+  setStatus('正在解析文档并构建图谱，可能需要 20–30 秒，请勿关闭…')
   try {
     const r = await api.uploadDocument(title || 'untitled', content)
     setStatus(
@@ -491,6 +495,9 @@ async function uploadDocument() {
     await loadGraph()
   } catch (err) {
     setStatus(`上传失败: ${(err as Error).message}`, true)
+  } finally {
+    btn.disabled = false
+    btn.textContent = '上传 / 更新'
   }
 }
 
@@ -511,17 +518,40 @@ async function deleteDocument(docId: string) {
 async function doQuery() {
   const q = (document.getElementById('query-input') as HTMLInputElement).value.trim()
   if (!q) return setStatus('请输入检索问题', true)
+  setStatus('检索中…')
   try {
     const r = await api.query(q)
-    const hitCount = r.trace.entities.length + r.trace.relationships.length
-    setStatus(`答案：${r.answer}（命中 ${hitCount} 项）`)
-    const entities = new Set(r.trace.entities.map((e) => e.name))
-    const relationships = new Set(r.trace.relationships.map((rel) => `${rel.src}||${rel.tgt}`))
-    queryRounds.unshift({ entities, relationships })
+    const hitEntities = new Set(r.trace.entities.map((e) => e.name))
+    const hitRelationships = new Set(r.trace.relationships.map((rel) => `${rel.src}||${rel.tgt}`))
+    setStatus(`命中 ${hitEntities.size} 实体 · ${hitRelationships.size} 关系`)
+    showAnswerPanel(q, r.answer, hitEntities.size, hitRelationships.size)
+    // 高亮集合：实体命中 + 关系两端点，保证「路径」上的节点与边一起高亮
+    const highlightEntities = new Set(hitEntities)
+    r.trace.relationships.forEach((rel) => {
+      highlightEntities.add(rel.src)
+      highlightEntities.add(rel.tgt)
+    })
+    queryRounds.unshift({ entities: highlightEntities, relationships: hitRelationships })
+    if (queryRounds.length > 4) queryRounds.pop()
     renderQueryHighlight()
   } catch (err) {
     setStatus(`检索失败: ${(err as Error).message}`, true)
   }
+}
+
+function renderAnswerMarkdown(text: string): string {
+  return escapeHtml(text)
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>')
+}
+
+function showAnswerPanel(question: string, answer: string, entityCount: number, relationCount: number) {
+  document.getElementById('answer-title')!.textContent = `检索：${question}`
+  document.getElementById('answer-body')!.innerHTML =
+    `<div class="hit-badge">命中 ${entityCount} 实体 · ${relationCount} 关系</div>` +
+    renderAnswerMarkdown(answer)
+  document.getElementById('answer-panel')!.classList.remove('hidden')
 }
 
 function renderQueryHighlight() {
@@ -605,6 +635,9 @@ document.getElementById('query-input')!.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') doQuery()
 })
 document.getElementById('btn-close-panel')!.onclick = hidePanel
+document.getElementById('btn-close-answer')!.onclick = () => {
+  document.getElementById('answer-panel')!.classList.add('hidden')
+}
 
 window.addEventListener('resize', () => {
   cy.resize()
