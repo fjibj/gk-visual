@@ -34,51 +34,48 @@ class _FakeRag:
         self.relationships_vdb = relationships_vdb or _FakeVdb([])
 
 
-def test_hit_trace_converges_and_scores():
+def test_hit_trace_core_plus_graph_spread():
     rag = _FakeRag(
         entities_vdb=_FakeVdb(
             [
-                {"entity_name": "字节跳动", "distance": 0.803},
-                {"entity_name": "张三", "distance": 0.30},
+                {"entity_name": "张三", "distance": 0.539},
+                {"entity_name": "软件工程师", "distance": 0.459},
             ]
-        ),
-        relationships_vdb=_FakeVdb(
-            [{"src_id": "张一鸣", "tgt_id": "字节跳动", "distance": 0.67}]
         ),
     )
     trace = {
+        "keywords": {"high_level": ["工作地点"], "low_level": ["张三"]},
         "entities": [
-            {"name": "字节跳动", "type": "organization", "description": "互联网公司"},
             {"name": "张三", "type": "person", "description": "员工"},
-            {"name": "无关实体", "type": "other", "description": "噪声"},
+            {"name": "字节跳动", "type": "organization", "description": "公司"},
+            {"name": "北京", "type": "location", "description": "城市"},
+            {"name": "李雷", "type": "person", "description": "无关"},
         ],
         "relationships": [
-            {
-                "src": "字节跳动",
-                "tgt": "张一鸣",
-                "description": "创立",
-                "keywords": "创始人",
-                "weight": 2.0,
-            },
-            {"src": "无关A", "tgt": "无关B", "description": "x", "keywords": "", "weight": 1.0},
+            {"src": "字节跳动", "tgt": "张三", "description": "雇佣", "keywords": "", "weight": 1.0},
+            {"src": "北京", "tgt": "张三", "description": "工作地", "keywords": "", "weight": 1.0},
+            {"src": "李雷", "tgt": "腾讯", "description": "无关边", "keywords": "", "weight": 1.0},
         ],
     }
-    out = asyncio.run(_hit_trace(rag, "q", trace))
+    out = asyncio.run(_hit_trace(rag, "张三在哪工作", trace))
 
-    # 收敛：只保留向量检索命中的实体（字节跳动、张三），无关实体被剔除
-    assert [e["name"] for e in out["entities"]] == ["字节跳动", "张三"]
-    assert out["entities"][0]["score"] == 0.803
-    assert out["entities"][0]["type"] == "organization"  # 从全图 trace 补回
-    assert out["entities"][1]["score"] == 0.30
-    # 关系用 sorted(src,tgt) 做 key：字节跳动↔张一鸣 两方向命中同一条；无关关系被剔除
-    assert len(out["relationships"]) == 1
-    assert out["relationships"][0]["score"] == 0.67
-    assert out["relationships"][0]["keywords"] == "创始人"
+    # 核心实体（ll_keywords 检索 top_k）+ 图扩散带出邻居端点；独立分量被排除
+    names = {e["name"] for e in out["entities"]}
+    assert "张三" in names and "字节跳动" in names and "北京" in names
+    assert "李雷" not in names
+    # 关系只含与核心实体相连的边
+    rel_keys = {f"{r['src']}->{r['tgt']}" for r in out["relationships"]}
+    assert "字节跳动->张三" in rel_keys
+    assert "李雷->腾讯" not in rel_keys
+    # 核心实体有 score
+    zhang = next(e for e in out["entities"] if e["name"] == "张三")
+    assert zhang["score"] == 0.539
 
 
 def test_hit_trace_degraded_on_error():
-    rag = _FakeRag(entities_vdb=_BoomVdb(), relationships_vdb=_BoomVdb())
+    rag = _FakeRag(entities_vdb=_BoomVdb())
     trace = {
+        "keywords": {"low_level": ["张三"]},
         "entities": [{"name": "字节跳动"}],
         "relationships": [{"src": "字节跳动", "tgt": "张一鸣"}],
     }

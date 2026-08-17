@@ -64,72 +64,70 @@ def _safe_score(value) -> float | None:
         return None
 
 
-HIT_TOP_K = 5  # 可视化"命中"截断：只高亮向量检索最相关的 top_k 实体/关系
+HIT_TOP_K = 5  # 核心实体截断：ll_keywords 检索实体的 top_k（再沿图扩散其邻居）
 
 
 async def _hit_trace(rag, question: str, trace: dict) -> dict:
-    """把 trace 的命中集合从「LightRAG 上下文子图」收敛为「向量检索 top_k」。
+    """把 trace 的命中集合收敛为「核心实体 + 图扩散」的连通路径。
 
-    背景：aquery_data 的 data["entities"] 是发给 LLM 的上下文子图，包含命中实体
-    + 邻居扩散 + low-level chunk 关联，小图几乎=全图，直接据此高亮会「全图红色」。
-    这里复用与 LightRAG high-level 同源的 entities_vdb / relationships_vdb 向量检索
-    取 top_k，只保留真正命中的实体/关系，并从全图 trace 补回 type/description/
-    keywords/weight，同时填 score。查询异常/查不到 → 诚实降级（保留原集合，
-    score 为 None），绝不编造。
+    背景：aquery_data 的 data["entities"] 是发给 LLM 的上下文子图（mix 模式 =
+    local 实体检索 + global 关系主题检索 + chunk 关联），小图几乎=全图；且 global
+    的关系向量检索会命中「话题相似但实体无关」的跨分量关系（问「字节跳动总部在哪」
+    会命中「深圳→腾讯」，因两者都讲「总部位置」）。直接据此高亮会全图红/跨分量红。
+
+    这里改按 LightRAG low-level（local）语义：用 ll_keywords（问题里的具体实体名，
+    如「张三」「字节跳动」）检索实体向量库取 top_k 核心实体，再沿图扩散其 1 跳邻居
+    边与端点。命中天然落在核心实体的连通分量内，独立分量与语义无关的全局关系被排除。
+    向量库异常 → 诚实降级退回全图（score=None），绝不编造。
     """
     full_entities = trace.get("entities", [])
     full_relationships = trace.get("relationships", [])
-    ent_by_name = {str(e.get("name")): e for e in full_entities if e.get("name")}
-    rel_by_key = {}
-    for r in full_relationships:
-        s, t = r.get("src"), r.get("tgt")
-        if s and t:
-            rel_by_key[tuple(sorted((str(s), str(t))))] = r
 
-    hit_entities = []
+    keywords = trace.get("keywords", {}) or {}
+    ll_kw = [str(k) for k in (keywords.get("low_level") or [])]
+    query_text = ", ".join(ll_kw) if ll_kw else question
+
+    # 核心实体 + 分数（一次向量检索）
+    core_names: list[str] = []
+    score_by_name: dict[str, float | None] = {}
     try:
-        results = await rag.entities_vdb.query(question, top_k=HIT_TOP_K)
+        results = await rag.entities_vdb.query(query_text, top_k=HIT_TOP_K)
         for r in results:
             name = r.get("entity_name")
             if name is None:
                 continue
-            base = ent_by_name.get(str(name), {})
-            hit_entities.append(
-                {
-                    "name": name,
-                    "type": base.get("type") or r.get("entity_type"),
-                    "description": base.get("description") or r.get("description"),
-                    "score": _safe_score(r.get("distance")),
-                }
-            )
+            core_names.append(str(name))
+            score_by_name[str(name)] = _safe_score(r.get("distance"))
     except Exception:
-        hit_entities = [{**e, "score": None} for e in full_entities]
+        trace["entities"] = [{**e, "score": None} for e in full_entities]
+        trace["relationships"] = [{**r, "score": None} for r in full_relationships]
+        return trace
 
-    hit_relationships = []
-    try:
-        results = await rag.relationships_vdb.query(question, top_k=HIT_TOP_K)
-        for r in results:
-            s, t = r.get("src_id"), r.get("tgt_id")
-            if s is None or t is None:
-                continue
-            key = tuple(sorted((str(s), str(t))))
-            base = rel_by_key.get(key, {})
-            hit_relationships.append(
-                {
-                    "src": s,
-                    "tgt": t,
-                    "description": base.get("description") or r.get("description"),
-                    "keywords": base.get("keywords") or r.get("keywords"),
-                    "weight": (
-                        base.get("weight")
-                        if base.get("weight") is not None
-                        else r.get("weight")
-                    ),
-                    "score": _safe_score(r.get("distance")),
-                }
+    core_set = set(core_names)
+
+    # 图扩散：至少一端在核心实体内的边，及其端点（1 跳连通路径）
+    hit_names = set(core_set)
+    hit_relationships: list[dict] = []
+    for r in full_relationships:
+        s, t = str(r.get("src")), str(r.get("tgt"))
+        if s in core_set or t in core_set:
+            hit_relationships.append(r)
+            hit_names.add(s)
+            hit_names.add(t)
+
+    # 组装实体：保留全图实体的 type/description，核心实体填 score
+    hit_entities: list[dict] = []
+    seen: set[str] = set()
+    for e in full_entities:
+        name = str(e.get("name"))
+        if name in hit_names and name not in seen:
+            seen.add(name)
+            hit_entities.append({**e, "score": score_by_name.get(name)})
+    for name in hit_names:
+        if name not in seen:
+            hit_entities.append(
+                {"name": name, "type": None, "description": None, "score": score_by_name.get(name)}
             )
-    except Exception:
-        hit_relationships = [{**r, "score": None} for r in full_relationships]
 
     trace["entities"] = hit_entities
     trace["relationships"] = hit_relationships
