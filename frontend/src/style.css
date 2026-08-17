@@ -303,6 +303,9 @@ body {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 12px;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
 }
 
 #answer-panel h2 {

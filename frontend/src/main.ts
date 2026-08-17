@@ -554,6 +554,43 @@ function showAnswerPanel(question: string, answer: string, entityCount: number, 
   document.getElementById('answer-panel')!.classList.remove('hidden')
 }
 
+function makeDraggable(panelId: string, handleId: string) {
+  const panelEl = document.getElementById(panelId)!
+  const handleEl = document.getElementById(handleId)!
+  let dragging = false
+  let offsetX = 0
+  let offsetY = 0
+
+  handleEl.addEventListener('pointerdown', (e: PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return // 关闭按钮不触发拖拽
+    dragging = true
+    const rect = panelEl.getBoundingClientRect()
+    offsetX = e.clientX - rect.left
+    offsetY = e.clientY - rect.top
+    try {
+      handleEl.setPointerCapture(e.pointerId)
+    } catch {
+      /* 合成事件等场景下忽略 */
+    }
+  })
+  handleEl.addEventListener('pointermove', (e: PointerEvent) => {
+    if (!dragging) return
+    const mainRect = document.getElementById('main')!.getBoundingClientRect()
+    let left = e.clientX - mainRect.left - offsetX
+    let top = e.clientY - mainRect.top - offsetY
+    left = Math.max(0, Math.min(left, mainRect.width - panelEl.offsetWidth))
+    top = Math.max(0, Math.min(top, mainRect.height - panelEl.offsetHeight))
+    panelEl.style.left = `${left}px`
+    panelEl.style.top = `${top}px`
+    panelEl.style.bottom = 'auto'
+  })
+  const stop = () => {
+    dragging = false
+  }
+  handleEl.addEventListener('pointerup', stop)
+  handleEl.addEventListener('pointercancel', stop)
+}
+
 function renderQueryHighlight() {
   cy.elements().removeClass('dimmed').removeClass('hit')
   cy.nodes().forEach((n) => {
@@ -638,6 +675,7 @@ document.getElementById('btn-close-panel')!.onclick = hidePanel
 document.getElementById('btn-close-answer')!.onclick = () => {
   document.getElementById('answer-panel')!.classList.add('hidden')
 }
+makeDraggable('answer-panel', 'answer-head')
 
 window.addEventListener('resize', () => {
   cy.resize()
