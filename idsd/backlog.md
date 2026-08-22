@@ -73,3 +73,27 @@
 - **优先级**：文件格式解析 = 主体先做（更安全更常用）；URL 抓取 = 后置子项（安全面大：SSRF/超时/大小限制/robots）。
 - **实现线索**：格式适配层只做「字节/URL → 纯文本」，下游复用 S6 `ingest_document` + `POST /api/documents`；解析用 python-docx/openpyxl/pypdf/python-pptx。
 - **详见**：`idsd/intents/slice-8-document-ingestion-enhancement/`。
+
+## 9. 实体/边溯源标签（LLM 抽取 vs 手工创建）
+
+- **状态**：候选（用户 2026-08-22 拍板「记下来，后面再做」）。来源：graphify 对比分析。
+- **灵感**：graphify 每条边打 `EXTRACTED`（源码明确存在）/ `INFERRED`（推断）标签，「永远知道哪些是读到的、哪些是猜的」——与本项目约束 2「透明」同源。
+- **内容**：图里区分两类元素并给视觉标记：
+  - **LLM 抽取**：带 `source_id`（指向 chunk），可溯源到原文档；
+  - **手工创建**：无 source_id（`POST /api/entities` 不带 chunk 来源），纯人工录入。
+- **现状盘点**：信息已隐式存在——抽取实体有 `source_id`（`<SEP>` 分隔的 chunk 列表），手工新建的没有；前端未展示这个区别。
+- **实现线索**：后端 `/api/graph` 透传 `source_id` 是否为空（或算个 `origin: extracted|manual` 字段）；前端节点/边加视觉标记（如手工建的加小图标/虚线边框）；详情面板显示溯源（抽取的列出所属文档，可跳转）。零检索改动、零 LLM 成本。
+
+## 10. 路径查询（A 到 B 怎么关联起来）
+
+- **状态**：候选（用户 2026-08-22 拍板「记下来，后面再做」）。来源：graphify 对比分析（`graphify path A B` 最短路）。
+- **内容**：前端加「路径查询」：输入两个实体名，图上高亮它们之间的最短路径（逐跳展示）。
+- **实现线索**：与语义检索无关、零 LLM 成本——在 LightRAG 的 `chunk_entity_relation_graph`（NetworkX 图）上跑 `shortest_path`；新增 `/api/path?from=X&to=Y` 端点，返回路径节点/边序列；前端复用 S7 的高亮机制（`hit` class + ageColor）。适合做小切片（后端 1 端点 + 前端 1 输入框 + 复用高亮）。
+- **备注**：graphify 纯图遍历无向量库的确定性优势，正是这类查询；本项目图小（个人库），BFS 成本可忽略。
+
+## 11. 单文件图谱快照导出（graph.html 思路）
+
+- **状态**：候选（用户 2026-08-22 拍板「记下来，后面再做」）。来源：graphify 对比分析。
+- **灵感**：graphify 整个图交付为一个可分享的 `graph.html`（内嵌数据 + 交互，浏览器直接打开）。
+- **内容**：一键导出当前图谱快照为单文件 HTML：内嵌图数据 + Cytoscape 渲染，发给任何人/换机器可直接打开浏览（只读），无需起 server。
+- **实现线索**：后端加 `/api/export/html`（或 CLI 命令）：读全图 JSON → 塞进预编译的 HTML 模板（内联 cytoscape.js + 数据 + 只读版交互：缩放/拖拽/点选详情）；不含检索（无后端），编辑功能裁剪。注意数据敏感：导出文件等于把全库内容带出门，导出前应提示。
