@@ -238,6 +238,18 @@ def create_app(config=None) -> FastAPI:
 
     # ---- 静态前端托管 ----
 
+    @app.middleware("http")
+    async def _no_cache_frontend(request: Request, call_next):
+        """防陈旧前端：index.html 与 /api/* 不被浏览器强缓存（否则改完前端刷新看不到新构建）。
+
+        带 hash 的 assets 不改——它们文件名变了就自然失效。
+        """
+        response = await call_next(request)
+        path = request.url.path
+        if path.endswith(".html") or path == "/" or path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/", StaticFiles(directory=str(dist), html=True), name="static")

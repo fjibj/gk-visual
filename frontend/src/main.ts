@@ -17,10 +17,32 @@ function typeColor(t: string): string {
   return TYPE_COLORS[t] || TYPE_COLORS.other
 }
 
+// 检索多轮颜色：最新一轮（age=0）深红，历史逐轮明显变浅变细变淡
+// 色阶拉开到「红 → 浅粉」量级，避免第 2 档看着仍像红色
+const AGE_COLORS = ['#c81e2e', '#ef8a96', '#f7c3ca', '#fbe2e6']
+const AGE_WIDTHS = [5, 2.5, 2, 1.5]
+const AGE_OPACITY = [1, 0.72, 0.58, 0.46]
+// 本轮命中节点略放大，缩小时也能一眼看出哪轮是最新的
+const AGE_SIZE = [40, 34, 32, 32]
+
+function ageIndex(age: number): number {
+  return Math.min(Math.max(Math.floor(Number(age) || 0), 0), AGE_COLORS.length - 1)
+}
+
 function ageColor(age: number): string {
-  // 检索多轮颜色：最新（age=0）最深，历史越远越浅
-  const steps = ['#c81e2e', '#e05a6a', '#ec8d99', '#f6c5cd']
-  return steps[Math.min(Math.max(age, 0), steps.length - 1)]
+  return AGE_COLORS[ageIndex(age)]
+}
+
+function ageWidth(age: number): number {
+  return AGE_WIDTHS[ageIndex(age)]
+}
+
+function ageOpacity(age: number): number {
+  return AGE_OPACITY[ageIndex(age)]
+}
+
+function ageSize(age: number): number {
+  return AGE_SIZE[ageIndex(age)]
 }
 
 const cy = cytoscape({
@@ -88,16 +110,20 @@ const cy = cytoscape({
     {
       selector: 'node.hit',
       style: {
-        'border-width': 3,
-        'border-color': (ele: any) => ageColor(Number(ele.data('hitAge') ?? 0)),
+        'border-width': (ele: any) => ageWidth(ele.data('hitAge')),
+        'border-color': (ele: any) => ageColor(ele.data('hitAge')),
+        opacity: (ele: any) => ageOpacity(ele.data('hitAge')),
+        width: (ele: any) => ageSize(ele.data('hitAge')),
+        height: (ele: any) => ageSize(ele.data('hitAge')),
       },
     },
     {
       selector: 'edge.hit',
       style: {
-        width: 3,
-        'line-color': (ele: any) => ageColor(Number(ele.data('hitAge') ?? 0)),
-        'target-arrow-color': (ele: any) => ageColor(Number(ele.data('hitAge') ?? 0)),
+        width: (ele: any) => ageWidth(ele.data('hitAge')),
+        'line-color': (ele: any) => ageColor(ele.data('hitAge')),
+        'target-arrow-color': (ele: any) => ageColor(ele.data('hitAge')),
+        opacity: (ele: any) => ageOpacity(ele.data('hitAge')),
       },
     },
   ],
@@ -591,6 +617,23 @@ function makeDraggable(panelId: string, handleId: string) {
   handleEl.addEventListener('pointercancel', stop)
 }
 
+function renderQueryLegend() {
+  const el = document.getElementById('query-legend')!
+  if (queryRounds.length === 0) {
+    el.classList.add('hidden')
+    el.innerHTML = ''
+    return
+  }
+  const rows = [`<div class="lg-row"><span class="lg-swatch" style="background:${ageColor(0)}"></span>本轮命中</div>`]
+  for (let age = 1; age < queryRounds.length && age < AGE_COLORS.length; age++) {
+    const label = age === 1 ? '上一轮' : '更早'
+    rows.push(`<div class="lg-row"><span class="lg-swatch" style="background:${ageColor(age)}"></span>${label}</div>`)
+  }
+  rows.push('<div class="lg-row lg-dim"><span class="lg-swatch" style="background:#c9d1d9"></span>未命中</div>')
+  el.innerHTML = rows.join('')
+  el.classList.remove('hidden')
+}
+
 function renderQueryHighlight() {
   cy.elements().removeClass('dimmed').removeClass('hit')
   cy.nodes().forEach((n) => {
@@ -599,7 +642,10 @@ function renderQueryHighlight() {
   cy.edges().forEach((e) => {
     e.data('hitAge', null)
   })
-  if (queryRounds.length === 0) return
+  if (queryRounds.length === 0) {
+    renderQueryLegend()
+    return
+  }
 
   const nodeAges = new Map<string, number>()
   const edgeAges = new Map<string, number>()
@@ -632,6 +678,7 @@ function renderQueryHighlight() {
       e.addClass('dimmed')
     }
   })
+  renderQueryLegend()
 }
 
 // ---- 事件绑定 ----
