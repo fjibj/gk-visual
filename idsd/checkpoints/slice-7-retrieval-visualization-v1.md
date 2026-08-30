@@ -129,3 +129,5 @@ pytest **43 passed**（新增 2 例：分数闸门跨分量剔除、无分数时
 - `MAX_HOPS=4` / `MAX_PATHS=6` 是展示预算（超限如实报 disconnected / 截断），不是语义筛子；图变大后仍需观察。
 - 孤立实体仍不进命中（backlog 条目 4）；颜色与预算值均未做可配置。
 
+完整分析过程（含被推翻的三条论断、例外场景清单、验证方法与工具坑）已另文记录：[检索命中判据与高亮编码的演进全记录](../notes/retrieval-hit-and-highlight-encoding-log.md)。
+
