@@ -65,6 +65,7 @@ def _safe_score(value) -> float | None:
 
 
 HIT_TOP_K = 5  # 核心实体截断：ll_keywords 检索实体的 top_k（再沿图扩散其邻居）
+HIT_MIN_RATIO = 0.8  # 分数闸门：得分低于最高分 80% 的向量命中被剔除（跨分量「话题相似」）
 
 
 async def _hit_trace(rag, question: str, trace: dict) -> dict:
@@ -76,8 +77,9 @@ async def _hit_trace(rag, question: str, trace: dict) -> dict:
     会命中「深圳→腾讯」，因两者都讲「总部位置」）。直接据此高亮会全图红/跨分量红。
 
     这里改按 LightRAG low-level（local）语义：用 ll_keywords（问题里的具体实体名，
-    如「张三」「字节跳动」）检索实体向量库取 top_k 核心实体，再沿图扩散其 1 跳邻居
-    边与端点。命中天然落在核心实体的连通分量内，独立分量与语义无关的全局关系被排除。
+    如「张三」「字节跳动」）检索实体向量库取 top_k 核心实体，经分数闸门（低于最高分
+    HIT_MIN_RATIO 的剔除）后，再沿图扩散其 1 跳邻居边与端点。命中天然落在核心实体的
+    连通分量内，独立分量与语义无关的全局关系被排除。
     向量库异常 → 诚实降级退回全图（score=None），绝不编造。
     """
     full_entities = trace.get("entities", [])
@@ -105,6 +107,22 @@ async def _hit_trace(rag, question: str, trace: dict) -> dict:
 
     core_set = set(core_names)
 
+    # 分数闸门：向量召回只说明「话题相关」，不说明「问题问的就是它」。
+    # 小图上 top_k 必然拉进一堆次优候选（问「腾讯」会把描述里带「总部」的
+    # 「字节跳动」也拽进来，再经图扩散把整个无关分量标红）。这里按与最高分的相对好
+    # 坏截断：分数跳崖式下降的候选被剔除，不进核心集也不参与扩散。
+    scored = [(n, score_by_name[n]) for n in core_names if score_by_name.get(n) is not None]
+    dropped: list[dict] = []
+    if scored:
+        top = max(s for _, s in scored)
+        floor = top * HIT_MIN_RATIO
+        kept = [n for n, s in scored if s >= floor]
+        dropped = [{"name": n, "score": s, "ratio": round(s / top, 3)} for n, s in scored if s < floor]
+        if not kept:
+            kept = [max(scored, key=lambda x: x[1])[0]]
+        core_set = set(kept)
+        core_names = kept
+
     # 图扩散：至少一端在核心实体内的边，及其端点（1 跳连通路径）
     hit_names = set(core_set)
     hit_relationships: list[dict] = []
@@ -131,6 +149,12 @@ async def _hit_trace(rag, question: str, trace: dict) -> dict:
 
     trace["entities"] = hit_entities
     trace["relationships"] = hit_relationships
+    trace["hit_filter"] = {
+        "top_k": HIT_TOP_K,
+        "min_ratio": HIT_MIN_RATIO,
+        "core": list(core_names),
+        "dropped": dropped,
+    }
     return trace
 
 

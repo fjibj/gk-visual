@@ -72,6 +72,63 @@ def test_hit_trace_core_plus_graph_spread():
     assert zhang["score"] == 0.539
 
 
+def test_hit_trace_score_gate_drops_cross_component():
+    """分数闸门：问「腾讯总部在哪」时，描述里带「总部」的字节跳动（分数跳崖）不得进核心集，
+    也不能经图扩散把它的整串邻居（北京/张一鸣）标红。"""
+    rag = _FakeRag(
+        entities_vdb=_FakeVdb(
+            [
+                {"entity_name": "腾讯", "distance": 0.759},
+                {"entity_name": "深圳", "distance": 0.678},
+                {"entity_name": "李雷", "distance": 0.626},
+                {"entity_name": "字节跳动", "distance": 0.487},
+                {"entity_name": "张一鸣", "distance": 0.461},
+            ]
+        ),
+    )
+    trace = {
+        "keywords": {"high_level": ["总部地址"], "low_level": ["腾讯"]},
+        "entities": [
+            {"name": "腾讯", "type": "organization", "description": "公司"},
+            {"name": "深圳", "type": "location", "description": "城市"},
+            {"name": "李雷", "type": "person", "description": "员工"},
+            {"name": "字节跳动", "type": "organization", "description": "总部位于北京"},
+            {"name": "北京", "type": "location", "description": "城市"},
+            {"name": "张一鸣", "type": "person", "description": "创始人"},
+        ],
+        "relationships": [
+            {"src": "深圳", "tgt": "腾讯", "description": "总部", "keywords": "", "weight": 1.0},
+            {"src": "李雷", "tgt": "腾讯", "description": "工作", "keywords": "", "weight": 1.0},
+            {"src": "北京", "tgt": "字节跳动", "description": "总部", "keywords": "", "weight": 1.0},
+            {"src": "字节跳动", "tgt": "张一鸣", "description": "创立", "keywords": "", "weight": 1.0},
+        ],
+    }
+    out = asyncio.run(_hit_trace(rag, "腾讯总部在哪", trace))
+
+    names = {e["name"] for e in out["entities"]}
+    assert {"腾讯", "深圳", "李雷"} <= names
+    assert "字节跳动" not in names and "张一鸣" not in names and "北京" not in names
+    rel_keys = {f"{r['src']}->{r['tgt']}" for r in out["relationships"]}
+    assert rel_keys == {"深圳->腾讯", "李雷->腾讯"}
+    # 被剔除的候选写进 trace，透明窗里看得见
+    filt = out["hit_filter"]
+    assert {d["name"] for d in filt["dropped"]} == {"字节跳动", "张一鸣"}
+    assert filt["min_ratio"] == 0.8
+
+
+def test_hit_trace_gate_skipped_without_scores():
+    """向量命中无分数（全 None）时不强加闸门，保持原有核心+扩散行为。"""
+    rag = _FakeRag(entities_vdb=_FakeVdb([{"entity_name": "张三"}, {"entity_name": "李雷"}]))
+    trace = {
+        "keywords": {"low_level": ["张三"]},
+        "entities": [{"name": "张三"}, {"name": "李雷"}],
+        "relationships": [{"src": "张三", "tgt": "李雷", "description": "", "keywords": "", "weight": 1}],
+    }
+    out = asyncio.run(_hit_trace(rag, "张三和李雷", trace))
+    assert {e["name"] for e in out["entities"]} == {"张三", "李雷"}
+    assert out["hit_filter"]["dropped"] == []
+
+
 def test_hit_trace_degraded_on_error():
     rag = _FakeRag(entities_vdb=_BoomVdb())
     trace = {

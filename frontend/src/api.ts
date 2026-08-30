@@ -41,10 +41,24 @@ export interface TraceRelation {
   score: number | null
 }
 
+export interface HitFilterDropped {
+  name: string
+  score: number
+  ratio: number
+}
+
+export interface HitFilter {
+  top_k: number
+  min_ratio: number
+  core: string[]
+  dropped: HitFilterDropped[]
+}
+
 export interface QueryTrace {
   entities: TraceEntity[]
   relationships: TraceRelation[]
   chunks: { content: string; chunk_id: string }[]
+  hit_filter?: HitFilter
 }
 
 export interface QueryResult {

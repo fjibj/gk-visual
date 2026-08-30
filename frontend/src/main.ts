@@ -1,7 +1,7 @@
 import cytoscape from 'cytoscape'
 import coseBilkent from 'cytoscape-cose-bilkent'
 import './style.css'
-import { api, GraphData, DocumentInfo } from './api'
+import { api, GraphData, DocumentInfo, HitFilter } from './api'
 
 cytoscape.use(coseBilkent)
 
@@ -550,7 +550,7 @@ async function doQuery() {
     const hitEntities = new Set(r.trace.entities.map((e) => e.name))
     const hitRelationships = new Set(r.trace.relationships.map((rel) => `${rel.src}||${rel.tgt}`))
     setStatus(`命中 ${hitEntities.size} 实体 · ${hitRelationships.size} 关系`)
-    showAnswerPanel(q, r.answer, hitEntities.size, hitRelationships.size)
+    showAnswerPanel(q, r.answer, hitEntities.size, hitRelationships.size, r.trace.hit_filter)
     // 高亮集合：实体命中 + 关系两端点，保证「路径」上的节点与边一起高亮
     const highlightEntities = new Set(hitEntities)
     r.trace.relationships.forEach((rel) => {
@@ -572,10 +572,23 @@ function renderAnswerMarkdown(text: string): string {
     .replace(/\n/g, '<br>')
 }
 
-function showAnswerPanel(question: string, answer: string, entityCount: number, relationCount: number) {
+function showAnswerPanel(
+  question: string,
+  answer: string,
+  entityCount: number,
+  relationCount: number,
+  filter?: HitFilter,
+) {
   document.getElementById('answer-title')!.textContent = `检索：${question}`
+  const dropped = filter?.dropped ?? []
+  const dropLine = dropped.length
+    ? `<div class="drop-badge">闸门排除 ${dropped.length} 个低分候选：${dropped
+        .map((d) => `${escapeHtml(d.name)} ${d.score.toFixed(3)}（仅最高分的 ${Math.round(d.ratio * 100)}%）`)
+        .join(' · ')}</div>`
+    : ''
   document.getElementById('answer-body')!.innerHTML =
     `<div class="hit-badge">命中 ${entityCount} 实体 · ${relationCount} 关系</div>` +
+    dropLine +
     renderAnswerMarkdown(answer)
   document.getElementById('answer-panel')!.classList.remove('hidden')
 }
