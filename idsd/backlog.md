@@ -15,7 +15,7 @@
 
 ## 2. 文档生命周期（上传 / 列表 / 删除文档）
 
-- **状态**：切片缺口，未在任何切片（S1–S5）覆盖。用户 2026-08-16 指出。
+- **状态**：**已实现**（S6，2026-08-30 用户验收通过）。下方为立项时的缺口盘点，保留备查。
 - **现状盘点**：
   - 文档→图：S1 已做，但**仅 CLI**（`python -m graphkb.cli ingest <path>` 读本地 UTF-8 文本），无前端上传入口。
   - 增量合并/同名对齐：S2 已做，但**仅 CLI**；同名实体自动聚合靠 LightRAG `ainsert`（只对完全同名生效），变体靠显式 `merge` 命令。
@@ -46,7 +46,7 @@
 
 ## 5. 检索前端可视化缺口（检索框 + 图上路径高亮 + 多轮颜色演进）
 
-- **状态**：切片缺口，未在任何切片（S1–S5）覆盖。用户 2026-08-17 指出。
+- **状态**：**已实现**（S7，2026-08-30 用户验收通过，含三轮返工）。演进全过程见 `idsd/notes/retrieval-hit-and-highlight-encoding-log.md`。
 - **内容**：
   - 检索目前仅 CLI（`python -m graphkb.cli query`）；`server.py` 无 `/api/query` 端点；前端无检索框。
   - 「检索路径在图上高亮 + 多轮对话颜色演进（当前步最深、历史越远越浅）」是 overall Goal 4 的一部分：S3 intent 明确「多轮颜色演进留到 S4 有 UI 后」，但 S4 只做了图谱可视化 + 编辑，未接检索路径高亮——**切片衔接遗漏**。
@@ -68,10 +68,11 @@
 
 ## 8. 文档摄取增强（文件格式 + URL 抓取）
 
-- **状态**：已立项 S8（用户 2026-08-17 拍板「S8 可以先立，等我验证完 S6、S7 之后再做」）。
+- **状态**：已立项 S8，**前置闸门已解除**（用户 2026-08-17 拍板「S8 可以先立，等我验证完 S6、S7 之后再做」；S6/S7 均于 2026-08-30 验收通过）。开工与否待用户点名。
+- **选型更新（2026-08-30 实测）**：不必自写四个适配器——LightRAG 1.5.6 自带 `lightrag.parser.legacy.extract_text`，见条目 13。
 - **内容**：当前文档上传只支持粘贴纯文本；真实文件（docx/xlsx/pptx/pdf/txt/md）解析 + URL 抓取是缺口。
 - **优先级**：文件格式解析 = 主体先做（更安全更常用）；URL 抓取 = 后置子项（安全面大：SSRF/超时/大小限制/robots）。
-- **实现线索**：格式适配层只做「字节/URL → 纯文本」，下游复用 S6 `ingest_document` + `POST /api/documents`；解析用 python-docx/openpyxl/pypdf/python-pptx。
+- **实现线索**：格式适配层只做「字节/URL → 纯文本」，下游复用 S6 `ingest_document` + `POST /api/documents`；解析直接调 `lightrag.parser.legacy.extract_text`（原方案的 python-docx/openpyxl/pypdf/python-pptx 正是它的内部依赖）。
 - **详见**：`idsd/intents/slice-8-document-ingestion-enhancement/`。
 
 ## 9. 实体/边溯源标签（LLM 抽取 vs 手工创建）
@@ -105,3 +106,30 @@
 - **已做的缓解**：`hit_layers.unmatched_keywords` 会在面板显式提示「问题里的「姚明」图上没有对应实体」，并附一句「下方红圈不表示检索找到了依据」。零新规则，靠现有 ll_keywords 对比图实体名得出。
 - **未做**：判断「这句答案是在引用证据还是在声明无据」需要否定/情态语义（“无法确认”“没有记载”），要么关键词表（脆、新增规则族）、要么叫 LLM 分类（多一次调用）。两者都比现在贵，所以先记账不动手。
 - **备选路线**：让透明窗多一层「无据」状态（红圈降级成空心环 + 面板顶部标「答案未给出图依据」），先用规则：答案中出现 `无法确认|未出现|没有.*描述|无法基于现有资料` 这类模板句式时降级——但 LightRAG 的提示词并不保证这些句式，属低置信启发。
+
+## 13. S8 选型证据：LightRAG 自带解析层，可零自研
+
+- **状态**：已查证（2026-08-30，为 S8 开工做准备，未开工）。结论：**S8 的「文件格式解析」主体可以一行解析代码都不写**。
+- **实测入口**（`site-packages/lightrag/parser/legacy/extractors.py`）：
+  ```python
+  from lightrag.parser.legacy import extract_text, LegacyExtractionError
+  text: str = extract_text(file_bytes, suffix, pdf_password=None)   # 同步，官方注释要求调用方放线程里跑
+  ```
+  入参是**字节 + 后缀**，不依赖 LightRAG 的 `ParseContext`/pipeline/`inputs/` 目录——意味着我们可以直接复用，不必把文件落进它的目录布局。
+- **支持范围**：`legacy` 引擎覆盖 `txt md mdx pdf docx pptx xlsx rtf odt tex epub html htm csv json xml yaml yml log conf ini properties sql …`；内部按需延迟 import `pypdf` / `docx` / `pptx` / `openpyxl`（docx 表格、xlsx 多 sheet 已转成带转义的 markdown 表格），其余后缀走 `_decode_text`。
+- **另有**：`native` 引擎（docx/md/textpack，带 LLM 标题判定）、`external/mineru|docling`（远程服务，需 `MINERU_LOCAL_ENDPOINT`/`MINERU_API_TOKEN`/`DOCLING_ENDPOINT`，支持 pdf/图片）。**S8 不需要它们**——结构化版面还原属天花板，先用 legacy 的纯文本。
+- **调试便利**：`python -m lightrag.parser.cli` 可单文件跨引擎跑解析，S8 排错时可直接用。
+- **开工前置（硬）**：
+  1. `python-multipart` **当前未安装**，而 FastAPI 的 `UploadFile`/`Form` 必须有它——上传端点一上就报 `Form data requires "python-multipart" to be installed`。
+  2. `pyproject.toml` 依赖声明不全：本项目 `dependencies = ["lightrag-hku", "httpx", "python-dotenv"]`，而 `fastapi`/`uvicorn`/`python-docx`/`python-pptx`/`openpyxl`/`pypdf` **全部只存在于 `lightrag-hku[api]` extra**。当前机器能跑是因为装了带 extra 的版本；换机 `pip install -e .` 后 server 与解析都会缺包。修法二选一：把依赖写成 `lightrag-hku[api]`，或显式列出 fastapi/uvicorn/python-multipart + 四个解析库。
+- **待 spike**：大文件解析耗时（同步函数放 `asyncio.to_thread`，UI 已有 loading 态可复用）；空文本/纯图 PDF（pypdf 抽不出字）的报错文案；大小上限具体值。
+
+## 14. 工程债：无 README、无 CI、参数未配置化
+
+- **状态**：未做，随时可插队的小片。
+- **内容**：
+  - 仓库根**没有 README.md**——新机器上手要靠 `idsd/` 里的设计文档反推启动命令，与「方便打包发布」的诉求相冲。至少要写：装什么（含条目 13 的 extra 问题）、`.env` 模板、起 server、跑 pytest/holdout。
+  - 无 CI 入口（51 个 pytest + 7 份 holdout 全靠手动跑）。
+  - `HIT_TOP_K=5` / `MAX_HOPS=4` / `MAX_PATHS=6` / 前端色温二档均为硬编码，未走 `graphkb/config.py`。
+  - `graphkb/cli.py` 无 `serve` 子命令，起 server 只能 `python -m uvicorn graphkb.server:app`（每次手敲，且本次会话已因此多绕了一轮）。
+

@@ -4,7 +4,7 @@
 workflow:
   type: planned-build
   project: graph-knowledge-base
-  current_slice: slice-7-retrieval-visualization
+  current_slice: slice-8-document-ingestion-enhancement
   status: in_progress
 
 slices:
@@ -34,7 +34,8 @@ slices:
     depends_on: [slice-1-doc-to-graph, slice-4-graph-edit]
   - id: slice-7-retrieval-visualization
     name: 检索可视化闭环（检索框 + 图上路径高亮 + 多轮颜色演进）
-    status: in_progress
+    status: completed
+    note: 2026-08-30 22:59 用户验收通过；期间三轮返工（分数闸门已废弃，现行为锚点+答案引用+最短路），全过程见 idsd/notes/retrieval-hit-and-highlight-encoding-log.md
     depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit, slice-5-edit-loop]
   - id: slice-8-document-ingestion-enhancement
     name: 文档摄取增强（文件格式解析 + URL 抓取）
@@ -72,11 +73,12 @@ steps:
     artifact: idsd/checkpoints/slice-7-retrieval-visualization-v1.md
   - id: 8
     name: 用户验收
-    status: pending
+    status: completed
+    note: 2026-08-30 22:59 用户「效果不错」；多轮色阶/跨分量误标红/分数闸门争议均已收敛
 
 summary:
   total_steps: 8
-  completed: 7
+  completed: 8
   in_progress: 0
-  pending: 1
+  pending: 0
   failed: 0
