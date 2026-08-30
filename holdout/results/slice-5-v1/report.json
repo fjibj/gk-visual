@@ -1,6 +1,6 @@
 {
   "version": "slice-5-v1",
-  "timestamp": "2026-08-17T00:00:27.635875",
+  "timestamp": "2026-08-30T17:32:04.931589",
   "passed": 7,
   "total": 7,
   "results": [
@@ -30,7 +30,7 @@
       "name": "s4_create_with_relation_hits",
       "expectation": "Success 4: 新建实体+关系后检索可命中新增内容",
       "passed": true,
-      "detail": "命中实体=['上海', '北京', '字节跳动', '张三'] 命中关系=[('上海', '字节跳动'), ('北京', '字节跳动'), ('字节跳动', '张三')]"
+      "detail": "命中实体=['上海', '北京', '字节跳动', '张三'] 命中关系=['上海->字节跳动', '北京->字节跳动', '字节跳动->张三']"
     },
     {
       "category": "failure",
@@ -44,14 +44,14 @@
       "name": "b1_isolated_entity_not_recalled",
       "expectation": "Boundary 1: 孤立实体不被 dual-level 检索召回（已知边界，锁定此行为）",
       "passed": true,
-      "detail": "孤立上海召回=False，命中=['北京', '字节跳动', '张三']"
+      "detail": "孤立上海召回=False，命中=['北京']"
     },
     {
       "category": "boundary",
       "name": "b2_unrelated_edit_no_side_effect",
       "expectation": "Boundary 2: 编辑无关实体不影响无关检索路径",
       "passed": true,
-      "detail": "编辑前=['北京', '字节跳动', '张三'] 编辑后=['北京', '字节跳动', '张三']"
+      "detail": "编辑前=['字节跳动'] 编辑后=['字节跳动']"
     }
   ]
 }

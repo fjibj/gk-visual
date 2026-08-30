@@ -30,6 +30,8 @@ export interface TraceEntity {
   type: string
   description: string
   score: number | null
+  /** 证据层：anchor=问题里点名的锚点，cited=答案里字面引用的，path=连接两者的路径点 */
+  layer?: 'anchor' | 'cited' | 'path' | null
 }
 
 export interface TraceRelation {
@@ -39,26 +41,51 @@ export interface TraceRelation {
   keywords: string
   weight: number | null
   score: number | null
+  /** direct=两端都是锚点/引用点（边本身就是证据），path=靠它中间才连上 */
+  layer?: 'direct' | 'path' | null
 }
 
-export interface HitFilterDropped {
+export interface HitPath {
+  from: string
+  to: string
+  kind: string
+  hops: number
+  paths: string[][]
+}
+
+export interface HitRecallItem {
   name: string
-  score: number
-  ratio: number
+  score: number | null
 }
 
-export interface HitFilter {
+export interface HitLayers {
+  anchor_mode: 'literal' | 'vector_fallback' | 'no_anchor' | 'vdb_error' | 'none'
+  anchors: string[]
+  cited: string[]
+  paths: HitPath[]
+  disconnected: { a: string; b: string | null; kind: string }[]
+  recall_only: HitRecallItem[]
+  /** 问题抽出的低层关键词里，图上查无此名的（文档没写过 / 实体未对齐） */
+  unmatched_keywords?: string[]
   top_k: number
-  min_ratio: number
-  core: string[]
-  dropped: HitFilterDropped[]
+  max_hops: number
+  max_paths: number
+}
+
+export interface RetrievedInfo {
+  entity_count: number
+  relation_count: number
+  entities: string[]
+  relationships: string[]
 }
 
 export interface QueryTrace {
   entities: TraceEntity[]
   relationships: TraceRelation[]
   chunks: { content: string; chunk_id: string }[]
-  hit_filter?: HitFilter
+  /** 检索器捞到的原记录，不受高亮分层影响 */
+  retrieved?: RetrievedInfo
+  hit_layers?: HitLayers
 }
 
 export interface QueryResult {

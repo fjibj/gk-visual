@@ -1,5 +1,5 @@
 """Failure 1：分数拿不到（向量库异常）→ 如实标注无分数，不编造。"""
-from graphkb.query import QueryResult, _score_trace
+from graphkb.query import QueryResult, _hit_trace
 from graphkb.render import render
 
 NAME = "f1_no_score_no_fabricate"
@@ -22,7 +22,7 @@ async def run():
         "entities": [{"name": "字节跳动"}],
         "relationships": [{"src": "a", "tgt": "b"}],
     }
-    out = await _score_trace(_FakeRag(), "q", trace)
+    out = await _hit_trace(_FakeRag(), "q", "a", trace)
     entity_score_none = out["entities"][0]["score"] is None
 
     result = QueryResult(question="q", answer="a", trace=out, trace_hit=True)

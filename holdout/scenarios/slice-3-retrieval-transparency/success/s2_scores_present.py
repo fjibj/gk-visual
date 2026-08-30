@@ -1,5 +1,5 @@
 """Success 2：真实向量库查询给命中实体补上 0~1 余弦分数。"""
-from graphkb.query import _score_trace
+from graphkb.query import _hit_trace
 
 from _common import KG, run_with_rag
 
@@ -13,7 +13,7 @@ async def run():
             "entities": [{"name": "字节跳动"}, {"name": "张三"}],
             "relationships": [{"src": "张三", "tgt": "字节跳动"}],
         }
-        out = await _score_trace(rag, "字节跳动", trace)
+        out = await _hit_trace(rag, "字节跳动", "a", trace)
         scores = [e.get("score") for e in out["entities"]]
         has = any(s is not None for s in scores)
         in_range = all(0.0 <= s <= 1.0 for s in scores if s is not None)

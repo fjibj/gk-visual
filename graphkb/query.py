@@ -8,8 +8,9 @@ trace 即 S1 的"透明窗"数据源，S3 只负责渲染它，不再改检索�
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 from lightrag import QueryParam
 
@@ -53,6 +54,14 @@ def _build_trace(data: dict, metadata: dict) -> dict[str, Any]:
         "entities": entities,
         "relationships": relationships,
         "chunks": chunks,
+        # 检索器到底掳到了什么——不受后续分层/高亮影响的原记录，
+        # 用来区分「检索没拿到」与「拿到了但答案没引用」
+        "retrieved": {
+            "entity_count": len(entities),
+            "relation_count": len(relationships),
+            "entities": [e["name"] for e in entities],
+            "relationships": [f"{r['src']}->{r['tgt']}" for r in relationships],
+        },
         "processing_info": metadata.get("processing_info"),
     }
 
@@ -64,98 +73,262 @@ def _safe_score(value) -> float | None:
         return None
 
 
-HIT_TOP_K = 5  # 核心实体截断：ll_keywords 检索实体的 top_k（再沿图扩散其邻居）
-HIT_MIN_RATIO = 0.8  # 分数闸门：得分低于最高分 80% 的向量命中被剔除（跨分量「话题相似」）
+HIT_TOP_K = 5  # 向量召回规模：只用于兜底锚点 + 给候选打分，不再决定谁进高亮
+MAX_HOPS = 4  # 锚点↔答案引用点之间最多连几跳；连不上就如实报「无路径」，不硬凑
+MAX_PATHS = 6  # 等长最短路最多展示几条（图上真有歧义时宁可全显示，也不静默挑一条）
+
+LAYER_ORDER = {"anchor": 0, "cited": 1, "path": 2}
 
 
-async def _hit_trace(rag, question: str, trace: dict) -> dict:
-    """把 trace 的命中集合收敛为「核心实体 + 图扩散」的连通路径。
+def _literal_names(text: str, names: Iterable[str]) -> list[str]:
+    """返回在 text 里字面出现的实体名；长名优先，被长名包含的短名不重复计（「杰伦」不另计）。"""
+    if not text:
+        return []
+    out: list[str] = []
+    for n in sorted({str(x) for x in names if x}, key=lambda v: (-len(v), v)):
+        if n in text and not any(n != o and n in o for o in out):
+            out.append(n)
+    return out
 
-    背景：aquery_data 的 data["entities"] 是发给 LLM 的上下文子图（mix 模式 =
-    local 实体检索 + global 关系主题检索 + chunk 关联），小图几乎=全图；且 global
-    的关系向量检索会命中「话题相似但实体无关」的跨分量关系（问「字节跳动总部在哪」
-    会命中「深圳→腾讯」，因两者都讲「总部位置」）。直接据此高亮会全图红/跨分量红。
 
-    这里改按 LightRAG low-level（local）语义：用 ll_keywords（问题里的具体实体名，
-    如「张三」「字节跳动」）检索实体向量库取 top_k 核心实体，经分数闸门（低于最高分
-    HIT_MIN_RATIO 的剔除）后，再沿图扩散其 1 跳邻居边与端点。命中天然落在核心实体的
-    连通分量内，独立分量与语义无关的全局关系被排除。
-    向量库异常 → 诚实降级退回全图（score=None），绝不编造。
+def _undirected_adjacency(edges: list[tuple[str, str]]) -> dict[str, list[str]]:
+    """无向邻接表（弱连通语义：人看小图时不区分方向）。"""
+    adj: dict[str, list[str]] = {}
+    for s, t in edges:
+        if not s or not t or s == t:
+            continue
+        adj.setdefault(s, [])
+        adj.setdefault(t, [])
+        if t not in adj[s]:
+            adj[s].append(t)
+        if s not in adj[t]:
+            adj[t].append(s)
+    return adj
+
+
+def _shortest_paths(adj: dict[str, list[str]], src: str, dst: str) -> list[list[str]]:
+    """src→dst 的全部等长最短路（节点序列）。不可达或超过 MAX_HOPS → []。"""
+    if src == dst:
+        return [[src]]
+    dist = {src: 0}
+    preds: dict[str, list[str]] = {}
+    queue = deque([src])
+    while queue:
+        u = queue.popleft()
+        if dist[u] >= MAX_HOPS:
+            continue
+        for v in adj.get(u, ()):
+            if v not in dist:
+                dist[v] = dist[u] + 1
+                preds[v] = [u]
+                queue.append(v)
+            elif dist[v] == dist[u] + 1 and u not in preds[v]:
+                preds[v].append(u)
+    if dst not in dist:
+        return []
+    paths: list[list[str]] = []
+    stack = [[dst]]
+    guard = 0
+    while stack and guard < 2000:
+        guard += 1
+        p = stack.pop()
+        u = p[0]
+        if u == src:
+            paths.append(list(p))
+            continue
+        for w in preds.get(u, ()):
+            stack.append([w, *p])
+    paths.sort()
+    return paths[:MAX_PATHS]
+
+
+async def _hit_trace(rag, question: str, answer: str, trace: dict) -> dict:
+    """把「检索器捞到什么」收敛成「答案落在哪条路径上」——三态分层，分数只作旁证。
+
+    为什么不用分数决定去留：实体向量库 embed 的是「名字+描述」，它只懂「话题相似」，
+    不懂「问题问的是不是它」。问「腾讯总部在哪」时「字节跳动」（描述含“总部位于北京”）
+    会进 top_k；问「蔡依林和周杰伦」时答案主语「台北」的比值正好卡在 0.80 边界——
+    任何阈值都是运气，不是判据。所以取舍改由两个可调用的结构判据决定：
+
+      锚点 = 问题里字面出现的图实体名（零参数、可复算）
+      证据 = 答案里字面引用的图实体名 + 连接它们的最短路径（连通性由构造保证）
+      仅召回 = 向量捞到但两者都不是 → 不着色，只在候选列表里带着分数展示
+
+    一题的高亮因此是「若干连通簇」：对比题（「腾讯和字节跳动的总部」）天然得到两个簇，
+    簇间无路径会被记进 disconnected 而不是被阈值抹掉——不连通本身就是答案的一部分。
+    另将 ll_keywords 里图上查无此名的关键词记进 unmatched_keywords，用来分辨
+    「检索没做好」与「图里本来就没这个实体」（如问「张三认识姚明吗」而姚明从未入库）。
+    向量库异常 → 不猜锚点、不分层，原样退回上下文（score=None），绝不编造。
     """
     full_entities = trace.get("entities", [])
     full_relationships = trace.get("relationships", [])
 
+    pool: list[str] = []
+    for e in full_entities:
+        name = str(e.get("name") or "")
+        if name and name not in pool:
+            pool.append(name)
+    for r in full_relationships:
+        for key in (str(r.get("src") or ""), str(r.get("tgt") or "")):
+            if key and key not in pool:
+                pool.append(key)
+
     keywords = trace.get("keywords", {}) or {}
     ll_kw = [str(k) for k in (keywords.get("low_level") or [])]
     query_text = ", ".join(ll_kw) if ll_kw else question
+    # 问题抽出的低层关键词里，哪些在图上根本不存在——这跟「检索坏了」不是一回事，
+    # 是图本身缺东西（没写过、或实体没对齐），得单独告知，不能闷在红圈里。
+    # LLM 有时把短语（「张三的公司」）也当成低层关键词，这类能包回已匹配实体名的不当作缺实体。
+    pool_set = set(pool)
+    q_names = _literal_names(question, pool)
+    unmatched = [
+        k
+        for k in ll_kw
+        if k and k not in pool_set and not any(k == n or k in n or n in k for n in q_names)
+    ]
 
-    # 核心实体 + 分数（一次向量检索）
-    core_names: list[str] = []
+    def _degrade(mode: str) -> dict:
+        trace["entities"] = [{**e, "score": None, "layer": None} for e in full_entities]
+        trace["relationships"] = [{**r, "score": None, "layer": None} for r in full_relationships]
+        trace["hit_layers"] = _layers_shell(mode, unmatched)
+        return trace
+
+    # 分数：只用来（a）问题里没有字面实体名时兜底选锚点，（b）给候选排序和展示
     score_by_name: dict[str, float | None] = {}
     try:
         results = await rag.entities_vdb.query(query_text, top_k=HIT_TOP_K)
-        for r in results:
+        for r in results or []:
             name = r.get("entity_name")
             if name is None:
                 continue
-            core_names.append(str(name))
             score_by_name[str(name)] = _safe_score(r.get("distance"))
     except Exception:
-        trace["entities"] = [{**e, "score": None} for e in full_entities]
-        trace["relationships"] = [{**r, "score": None} for r in full_relationships]
-        return trace
+        return _degrade("vdb_error")
 
-    core_set = set(core_names)
+    anchors = q_names
+    cited = [n for n in _literal_names(answer, pool) if n not in anchors]
+    anchor_mode = "literal"
+    if not anchors:
+        # 兜底锥点也只能从检索到的上下文里选：高亮集不得跑到上下文之外
+        scored = [(n, s) for n, s in score_by_name.items() if s is not None and n in pool_set]
+        if scored:
+            anchors = [max(scored, key=lambda x: x[1])[0]]
+            anchor_mode = "vector_fallback"
+        else:
+            anchor_mode = "none"
 
-    # 分数闸门：向量召回只说明「话题相关」，不说明「问题问的就是它」。
-    # 小图上 top_k 必然拉进一堆次优候选（问「腾讯」会把描述里带「总部」的
-    # 「字节跳动」也拽进来，再经图扩散把整个无关分量标红）。这里按与最高分的相对好
-    # 坏截断：分数跳崖式下降的候选被剔除，不进核心集也不参与扩散。
-    scored = [(n, score_by_name[n]) for n in core_names if score_by_name.get(n) is not None]
-    dropped: list[dict] = []
-    if scored:
-        top = max(s for _, s in scored)
-        floor = top * HIT_MIN_RATIO
-        kept = [n for n, s in scored if s >= floor]
-        dropped = [{"name": n, "score": s, "ratio": round(s / top, 3)} for n, s in scored if s < floor]
-        if not kept:
-            kept = [max(scored, key=lambda x: x[1])[0]]
-        core_set = set(kept)
-        core_names = kept
+    if anchor_mode == "none" and not cited:
+        # 问题问不到、答案引不到：没有可比对的锚点，不假装分层——把上下文原样交出去
+        return _degrade("no_anchor")
 
-    # 图扩散：至少一端在核心实体内的边，及其端点（1 跳连通路径）
-    hit_names = set(core_set)
-    hit_relationships: list[dict] = []
+    # 邻接表优先用全图（上下文子图可能缺中间边），拿不到图就退回上下文里的边
+    rel_by_key: dict[frozenset, dict] = {}
     for r in full_relationships:
-        s, t = str(r.get("src")), str(r.get("tgt"))
-        if s in core_set or t in core_set:
-            hit_relationships.append(r)
-            hit_names.add(s)
-            hit_names.add(t)
-
-    # 组装实体：保留全图实体的 type/description，核心实体填 score
-    hit_entities: list[dict] = []
-    seen: set[str] = set()
-    for e in full_entities:
-        name = str(e.get("name"))
-        if name in hit_names and name not in seen:
-            seen.add(name)
-            hit_entities.append({**e, "score": score_by_name.get(name)})
-    for name in hit_names:
-        if name not in seen:
-            hit_entities.append(
-                {"name": name, "type": None, "description": None, "score": score_by_name.get(name)}
+        s, t = str(r.get("src") or ""), str(r.get("tgt") or "")
+        rel_by_key.setdefault(frozenset((s, t)), r)
+    try:
+        for e in await rag.chunk_entity_relation_graph.get_all_edges():
+            s, t = str(e.get("source") or ""), str(e.get("target") or "")
+            if not s or not t:
+                continue
+            rel_by_key.setdefault(
+                frozenset((s, t)),
+                {"src": s, "tgt": t, "description": e.get("description") or "",
+                 "keywords": e.get("keywords") or "", "weight": e.get("weight")},
             )
+    except Exception:
+        pass
+    adj = _undirected_adjacency([(str(r.get("src") or ""), str(r.get("tgt") or "")) for r in rel_by_key.values()])
+
+    hit_layers = _layers_shell(anchor_mode, unmatched)
+    hit_layers["anchors"] = list(anchors)
+    hit_layers["cited"] = list(cited)
+
+    node_layer: dict[str, str] = {}
+    for n in anchors:
+        node_layer[n] = "anchor"
+    for n in cited:
+        node_layer.setdefault(n, "cited")
+    used_edges: set[frozenset] = set()
+
+    def _record(u: str, v: str, kind: str) -> None:
+        paths = _shortest_paths(adj, u, v)
+        if not paths:
+            hit_layers["disconnected"].append({"a": u, "b": v, "kind": kind})
+            return
+        for p in paths:
+            for mid in p[1:-1]:
+                node_layer.setdefault(mid, "path")
+            for x, y in zip(p, p[1:]):
+                used_edges.add(frozenset((x, y)))
+        hit_layers["paths"].append(
+            {"from": u, "to": v, "kind": kind, "hops": len(paths[0]) - 1, "paths": paths}
+        )
+
+    for i, a in enumerate(anchors):
+        for b in anchors[i + 1:]:
+            _record(a, b, "anchor-anchor")
+    for c in cited:
+        cands = anchors or [t for t in node_layer if t != c]
+        best: tuple[int, str] | None = None
+        for a in cands:
+            paths = _shortest_paths(adj, c, a)
+            if paths and (best is None or len(paths[0]) < best[0]):
+                best = (len(paths[0]) - 1, a)
+        if best is None:
+            hit_layers["disconnected"].append({"a": c, "b": anchors[0] if anchors else None, "kind": "cited-anchor"})
+        else:
+            _record(c, best[1], "cited-anchor")
+
+    hit_names = set(node_layer)
+    target_names = set(anchors) | set(cited)
+    hit_relationships: list[dict] = []
+    rel_seen: set[frozenset] = set()
+    for r in full_relationships + list(rel_by_key.values()):
+        s, t = str(r.get("src") or ""), str(r.get("tgt") or "")
+        key = frozenset((s, t))
+        if key in rel_seen or key not in used_edges:
+            continue
+        if s in hit_names and t in hit_names:
+            rel_seen.add(key)
+            # direct = 两端都是锚点/引用点（这条边本身就是证据）；path = 靠它中间才连上
+            hit_relationships.append(
+                {**r, "layer": "direct" if s in target_names and t in target_names else "path"}
+            )
+
+    by_name = {str(e.get("name")): e for e in full_entities}
+    hit_entities = [
+        {
+            **by_name.get(n, {"name": n, "type": None, "description": None}),
+            "name": n,
+            "score": score_by_name.get(n),
+            "layer": node_layer[n],
+        }
+        for n in sorted(hit_names, key=lambda x: (LAYER_ORDER.get(node_layer[x], 9), x))
+    ]
+    hit_layers["recall_only"] = [
+        {"name": n, "score": score_by_name.get(n)} for n in pool if n not in hit_names
+    ]
 
     trace["entities"] = hit_entities
     trace["relationships"] = hit_relationships
-    trace["hit_filter"] = {
-        "top_k": HIT_TOP_K,
-        "min_ratio": HIT_MIN_RATIO,
-        "core": list(core_names),
-        "dropped": dropped,
-    }
+    trace["hit_layers"] = hit_layers
     return trace
+
+
+def _layers_shell(mode: str, unmatched: list[str] | None = None) -> dict:
+    return {
+        "anchor_mode": mode,
+        "anchors": [],
+        "cited": [],
+        "paths": [],
+        "disconnected": [],
+        "recall_only": [],
+        "unmatched_keywords": list(unmatched or []),
+        "top_k": HIT_TOP_K,
+        "max_hops": MAX_HOPS,
+        "max_paths": MAX_PATHS,
+    }
 
 
 async def query(
@@ -185,7 +358,12 @@ async def query(
 
     if status == "success":
         trace = _build_trace(data, metadata)
-        trace = await _hit_trace(rag, question, trace)
+        if not (trace["entities"] or trace["relationships"]):
+            # 上下文就是空的 → 不生成答案，绝不返回无据可查的黑盒
+            return QueryResult(question=question, answer=NOT_FOUND_ANSWER, trace=trace, trace_hit=False)
+        # 分层要用答案文本做判据，所以答案先出、路径后算（aquery 自带一次检索，与旧版同量）
+        answer = await rag.aquery(question, param)
+        trace = await _hit_trace(rag, question, answer or "", trace)
     else:
         # 无结果（failure_reason == "no_results"）→ 如实报告未命中，不报错不编造
         trace = {
@@ -194,6 +372,7 @@ async def query(
             "entities": [],
             "relationships": [],
             "chunks": [],
+            "retrieved": {"entity_count": 0, "relation_count": 0, "entities": [], "relationships": []},
             "processing_info": {"failure_reason": metadata.get("failure_reason", "unknown")},
         }
 
@@ -201,5 +380,4 @@ async def query(
     if not hit:
         return QueryResult(question=question, answer=NOT_FOUND_ANSWER, trace=trace, trace_hit=False)
 
-    answer = await rag.aquery(question, param)
     return QueryResult(question=question, answer=answer, trace=trace, trace_hit=True)

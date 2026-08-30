@@ -1,6 +1,6 @@
 {
   "version": "slice-7-v1",
-  "timestamp": "2026-08-30T13:02:04.469824",
+  "timestamp": "2026-08-30T17:39:26.896706",
   "passed": 7,
   "total": 7,
   "results": [
@@ -16,7 +16,7 @@
       "name": "s2_trace_shape_for_highlight",
       "expectation": "Success 2: trace 含 entities/relationships/chunks 且为 list",
       "passed": true,
-      "detail": "trace keys=['chunks', 'entities', 'keywords', 'processing_info', 'query_mode', 'relationships']"
+      "detail": "trace keys=['chunks', 'entities', 'keywords', 'processing_info', 'query_mode', 'relationships', 'retrieved']"
     },
     {
       "category": "success",

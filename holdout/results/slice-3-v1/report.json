@@ -1,6 +1,6 @@
 {
   "version": "slice-3-v1",
-  "timestamp": "2026-08-16T18:20:49.348405",
+  "timestamp": "2026-08-30T17:29:57.846548",
   "passed": 7,
   "total": 7,
   "results": [
@@ -16,7 +16,7 @@
       "name": "s2_scores_present",
       "expectation": "Success 2: 命中实体有真实余弦分数（0~1）",
       "passed": true,
-      "detail": "scores=[0.8038913607597351, None]"
+      "detail": "scores=[0.8038913607597351]"
     },
     {
       "category": "success",

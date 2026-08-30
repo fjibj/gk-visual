@@ -12,7 +12,7 @@ async def run():
         await rag.amerge_entities(source_entities=["张三"], target_entity="李四")
 
         after = await query(rag, q, hl_keywords=["李四", "字节跳动", "北京"])
-        names = {e["name"] for e in after.trace["entities"]}
+        names = set(after.trace["retrieved"]["entities"])
         ok = "李四" in names and "张三" not in names
         return ok, f"合并后命中实体={sorted(names)}"
 

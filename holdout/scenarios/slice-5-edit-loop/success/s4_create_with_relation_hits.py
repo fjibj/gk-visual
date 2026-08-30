@@ -12,9 +12,9 @@ async def run():
         await rag.acreate_relation("字节跳动", "上海", {"description": "总部位于上海", "keywords": "总部"})
 
         r = await query(rag, "字节跳动总部在哪", hl_keywords=["字节跳动", "上海"])
-        names = {e["name"] for e in r.trace["entities"]}
-        rels = {(x["src"], x["tgt"]) for x in r.trace["relationships"]}
-        ok = "上海" in names and (("字节跳动", "上海") in rels or ("上海", "字节跳动") in rels)
+        names = set(r.trace["retrieved"]["entities"])
+        rels = set(r.trace["retrieved"]["relationships"])
+        ok = "上海" in names and ("字节跳动->上海" in rels or "上海->字节跳动" in rels)
         return ok, f"命中实体={sorted(names)} 命中关系={sorted(rels)}"
 
     return await run_with_rag(KG, body)

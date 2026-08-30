@@ -346,14 +346,59 @@ body {
   margin-bottom: 8px;
 }
 
-#answer-body .drop-badge {
-  color: #8b949e;
+#answer-body .warn-badge {
+  color: #7a5c00;
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: #fff8e5;
+  border-left: 3px solid #d4a72c;
+  border-radius: 4px;
+}
+
+#answer-body .path-box {
   font-size: 12px;
   margin-bottom: 8px;
   padding: 6px 8px;
   background: #f6f8fa;
-  border-left: 3px solid #d0d7de;
+  border-left: 3px solid #c81e2e;
   border-radius: 4px;
+}
+
+#answer-body .path-title {
+  font-weight: 600;
+  color: #57606a;
+  margin-bottom: 4px;
+}
+
+#answer-body .path-line {
+  line-height: 1.6;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+#answer-body .path-alt {
+  color: #8b949e;
+  margin-left: 4px;
+}
+
+#answer-body .recall {
+  font-size: 12px;
+  color: #57606a;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  background: #f6f8fa;
+  border-radius: 4px;
+}
+
+#answer-body .recall summary {
+  cursor: pointer;
+  color: #8b949e;
+}
+
+#answer-body .recall-note {
+  color: #8b949e;
+  margin: 4px 0;
 }
 
 /* query round color legend (bottom-right) */
@@ -383,12 +428,30 @@ body {
   line-height: 1.7;
 }
 
-#query-legend .lg-swatch {
+#query-legend .lg-ring {
   display: inline-block;
   width: 10px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: 50%;
+  border: 2px solid #c81e2e;
+  background: #fff;
   flex: 0 0 auto;
+}
+
+#query-legend .lg-thick {
+  border-width: 3px;
+  border-style: solid;
+}
+
+#query-legend .lg-dash {
+  border-width: 2px;
+  border-style: dashed;
+}
+
+#query-legend .lg-plain {
+  border-width: 1px;
+  border-color: #c9d1d9;
+  background: #eaeef2;
 }
 
 #query-legend .lg-dim {
