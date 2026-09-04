@@ -126,10 +126,11 @@
 
 ## 14. 工程债：无 README、无 CI、参数未配置化
 
-- **状态**：未做，随时可插队的小片。
-- **内容**：
-  - 仓库根**没有 README.md**——新机器上手要靠 `idsd/` 里的设计文档反推启动命令，与「方便打包发布」的诉求相冲。至少要写：装什么（含条目 13 的 extra 问题）、`.env` 模板、起 server、跑 pytest/holdout。
-  - 无 CI 入口（51 个 pytest + 7 份 holdout 全靠手动跑）。
-  - `HIT_TOP_K=5` / `MAX_HOPS=4` / `MAX_PATHS=6` / 前端色温二档均为硬编码，未走 `graphkb/config.py`。
-  - `graphkb/cli.py` 无 `serve` 子命令，起 server 只能 `python -m uvicorn graphkb.server:app`（每次手敲，且本次会话已因此多绕了一轮）。
+- **状态**：**大部分已还（2026-09-04）**。剩下的 CI 需等仓库有远端才能做。
+- **已还**：
+  - `README.md` 已写（含安装/配置表/启动/CLI/验证/约束速览）。
+  - 依赖声明已修：`pyproject.toml` 改 `lightrag-hku[api]>=1.5.6`，显式列出 fastapi / uvicorn / python-multipart / pypdf / python-docx / python-pptx / openpyxl；`python-multipart` 已安装（S8 上传必需）；加 `[project.scripts] graphkb` 与 `graphkb/__main__.py`（`python -m graphkb` 可用）。
+  - `HIT_TOP_K / MAX_HOPS / MAX_PATHS` 已配置化：`config.RetrievalConfig` + env `GKB_HIT_TOP_K/GKB_MAX_HOPS/GKB_MAX_PATHS`，从 `query()` → `_hit_trace()` → `_shortest_paths()` 全程透传；预算写进 `hit_layers`（前端显示的是实际值）。注意：改这些数不改变命中判据，只改变允许多宽。
+  - `graphkb.cli` 新增 `serve` 子命令（--host/--port/--reload）；`.env.example` 补 GKB_WORKSPACE 与三个预算变量。
+- **未还**：CI 入口（本仓库还没有 git remote，GitHub Actions 写了也没法跑）；前端色温/形态档位仍硬编码在 `main.ts`（跨 TS/Python 边界，收益低，后置）。
 

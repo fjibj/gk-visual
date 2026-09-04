@@ -74,7 +74,7 @@ async def _ingest(path: str) -> int:
 async def _query(question: str, as_json: bool = False) -> int:
     cfg = load_config()
     rag = await init_rag(cfg)
-    result = await query(rag, question)
+    result = await query(rag, question, budget=cfg.retrieval)
     await rag.finalize_storages()
 
     if as_json:
@@ -100,6 +100,15 @@ async def _merge(sources: list[str], target: str) -> int:
     return 0
 
 
+def _serve(host: str, port: int, reload: bool) -> int:
+    """起 Web UI（后端 + 前端静态页）。前端需先 `npm run build`（见 README）。"""
+    import uvicorn
+
+    print(f"graphkb server -> http://{host}:{port}")
+    uvicorn.run("graphkb.server:app", host=host, port=port, reload=reload)
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="graphkb")
     sub = parser.add_subparsers(dest="cmd")
@@ -117,6 +126,11 @@ def main() -> None:
     p_merge.add_argument("sources", nargs="+", help="要合并并删除的源实体名（一个或多个）")
     p_merge.add_argument("--into", required=True, dest="target", help="合并后的目标实体名")
 
+    p_serve = sub.add_parser("serve", help="启动 Web UI（默认 127.0.0.1:8000）")
+    p_serve.add_argument("--host", default="127.0.0.1")
+    p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.add_argument("--reload", action="store_true", help="后端代码热重载（开发用）")
+
     args = parser.parse_args()
     load_dotenv()
 
@@ -128,6 +142,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(_query(args.question, args.as_json)))
     if args.cmd == "merge":
         raise SystemExit(asyncio.run(_merge(args.sources, args.target)))
+    if args.cmd == "serve":
+        raise SystemExit(_serve(args.host, args.port, args.reload))
     parser.print_help()
 
 

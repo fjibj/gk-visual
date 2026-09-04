@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 
+from graphkb.config import RetrievalConfig
 from graphkb.query import (
     QueryResult,
     _literal_names,
@@ -34,10 +35,47 @@ def test_literal_names_long_name_first():
 def test_shortest_paths_keeps_all_equal_length_paths():
     """图上真有两条等长路时全显示——歧义是图的事实，不该由我们静默挑一条。"""
     adj = _undirected_adjacency([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("A", "D")])
-    assert _shortest_paths(adj, "A", "D") == [["A", "D"]]  # 1 跳最短，2 跳的两条被舍
+    assert _shortest_paths(adj, "A", "D", max_hops=4, max_paths=6) == [["A", "D"]]  # 1 跳最短，2 跳的两条被舍
     adj2 = _undirected_adjacency([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")])
-    assert _shortest_paths(adj2, "A", "D") == [["A", "B", "D"], ["A", "C", "D"]]
-    assert _shortest_paths(adj2, "A", "孤岛") == []
+    assert _shortest_paths(adj2, "A", "D", max_hops=4, max_paths=6) == [
+        ["A", "B", "D"],
+        ["A", "C", "D"],
+    ]
+    # 预算是真上限：跳数不够就连不上，等长路多时只展示 max_paths 条
+    assert _shortest_paths(adj2, "A", "D", max_hops=1, max_paths=6) == []
+    assert _shortest_paths(adj2, "A", "D", max_hops=4, max_paths=1) == [["A", "B", "D"]]
+    assert _shortest_paths(adj2, "A", "孤岛", max_hops=4, max_paths=6) == []
+
+
+def test_hit_trace_budget_limits_hops_end_to_end():
+    """max_hops 调小后，够不着的引用点不硬凑路径，而是记成 disconnected（可见）。"""
+    rag = _FakeRag()
+
+    def _three_node_trace():
+        return _trace(
+            ["张三", "北京", "台北"],
+            [("北京", "张三"), ("台北", "北京")],
+            ll_kw=["张三"],
+        )
+
+    out = asyncio.run(_hit_trace(rag, "张三下次去哪", "张三从北京出发去台北。", _three_node_trace()))
+    assert _names(out) == {"张三", "北京", "台北"}
+    assert _rel_keys(out) == {"北京->张三", "台北->北京"}
+    assert out["hit_layers"]["disconnected"] == []
+
+    tight = asyncio.run(
+        _hit_trace(
+            rag,
+            "张三下次去哪",
+            "张三从北京出发去台北。",
+            _three_node_trace(),
+            RetrievalConfig(max_hops=1),
+        )
+    )
+    # 台北离锚点 2 跳，超出上限：边不画、路径不记，但必须说出「连不上」
+    assert [d["a"] for d in tight["hit_layers"]["disconnected"]] == ["台北"]
+    assert _rel_keys(tight) == {"北京->张三"}
+    assert tight["hit_layers"]["max_hops"] == 1
 
 
 class _FakeVdb:
@@ -220,6 +258,24 @@ def test_hit_trace_flags_entities_missing_from_graph():
     # 「张三的公司」是 LLM 拆出的短语，能包回已命中的「张三」，不当作缺实体
     assert out["hit_layers"]["unmatched_keywords"] == ["姚明"]
     assert _names(out) == {"张三"}
+
+
+def test_hit_trace_budget_echoes_in_trace():
+    """本次真用的预算写进 trace——前端/CLI 显示的是实际值，不是文档里的默认值。"""
+    rag = _FakeRag(entities_vdb=_FakeVdb([{"entity_name": "张三", "distance": 0.5}]))
+    trace = _trace(["张三"], [], ll_kw=["张三"])
+    out = asyncio.run(
+        _hit_trace(
+            rag,
+            "张三怎么样",
+            "张三在。",
+            trace,
+            RetrievalConfig(hit_top_k=2, max_hops=3, max_paths=1),
+        )
+    )
+    assert out["hit_layers"]["top_k"] == 2
+    assert out["hit_layers"]["max_hops"] == 3
+    assert out["hit_layers"]["max_paths"] == 1
 
 
 def test_hit_trace_degraded_on_error():

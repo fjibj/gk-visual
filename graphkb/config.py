@@ -35,9 +35,23 @@ class EmbeddingConfig:
 
 
 @dataclass
+class RetrievalConfig:
+    """检索命中分层的预算值（graphkb/query.py 用）。
+
+    这三个数不是“调优参数”而是“防爆炸上限”：默认值经 S7 五轮实测选定，
+    改它们不会改变判据（锚点/答案引用/最短路），只改变允许多宽。
+    """
+
+    hit_top_k: int = 5  # 向量召回规模：只用于兵底锚点 + 给候选打分，不决定谁进高亮
+    max_hops: int = 4  # 锚点↔答案引用点之间最多连几跳；连不上就如实报「无路径」
+    max_paths: int = 6  # 等长最短路最多展示几条（图上真有歧义时全显示，不静默挑一条）
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     working_dir: str = "./data"
     language: str = "Chinese"
     workspace: str = ""
@@ -60,6 +74,11 @@ def load_config() -> Config:
             api_key=_env("GKB_EMBEDDING_API_KEY", ""),
             dim=int(_env("GKB_EMBEDDING_DIM", "1024")),
             max_token_size=int(_env("GKB_EMBEDDING_MAX_TOKEN_SIZE", "8192")),
+        ),
+        retrieval=RetrievalConfig(
+            hit_top_k=int(_env("GKB_HIT_TOP_K", "5")),
+            max_hops=int(_env("GKB_MAX_HOPS", "4")),
+            max_paths=int(_env("GKB_MAX_PATHS", "6")),
         ),
         working_dir=_env("GKB_WORKING_DIR", "./data"),
         language=_env("GKB_LANGUAGE", "Chinese"),

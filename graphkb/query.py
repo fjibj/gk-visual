@@ -14,6 +14,8 @@ from typing import Any, Iterable
 
 from lightrag import QueryParam
 
+from .config import RetrievalConfig
+
 NOT_FOUND_ANSWER = "未找到相关实体（图中未命中任何实体或关系）。"
 
 
@@ -73,9 +75,9 @@ def _safe_score(value) -> float | None:
         return None
 
 
-HIT_TOP_K = 5  # 向量召回规模：只用于兜底锚点 + 给候选打分，不再决定谁进高亮
-MAX_HOPS = 4  # 锚点↔答案引用点之间最多连几跳；连不上就如实报「无路径」，不硬凑
-MAX_PATHS = 6  # 等长最短路最多展示几条（图上真有歧义时宁可全显示，也不静默挑一条）
+# Budget values are configurable now: GKB_HIT_TOP_K / GKB_MAX_HOPS / GKB_MAX_PATHS
+# (see config.RetrievalConfig). This module keeps no numbers of its own — the single
+# source of truth for defaults is config.py, so tests and server cannot drift apart.
 
 LAYER_ORDER = {"anchor": 0, "cited": 1, "path": 2}
 
@@ -106,8 +108,10 @@ def _undirected_adjacency(edges: list[tuple[str, str]]) -> dict[str, list[str]]:
     return adj
 
 
-def _shortest_paths(adj: dict[str, list[str]], src: str, dst: str) -> list[list[str]]:
-    """src→dst 的全部等长最短路（节点序列）。不可达或超过 MAX_HOPS → []。"""
+def _shortest_paths(
+    adj: dict[str, list[str]], src: str, dst: str, *, max_hops: int, max_paths: int
+) -> list[list[str]]:
+    """src→dst 的全部等长最短路（节点序列）。不可达或超过 max_hops → []。"""
     if src == dst:
         return [[src]]
     dist = {src: 0}
@@ -115,7 +119,7 @@ def _shortest_paths(adj: dict[str, list[str]], src: str, dst: str) -> list[list[
     queue = deque([src])
     while queue:
         u = queue.popleft()
-        if dist[u] >= MAX_HOPS:
+        if dist[u] >= max_hops:
             continue
         for v in adj.get(u, ()):
             if v not in dist:
@@ -139,10 +143,16 @@ def _shortest_paths(adj: dict[str, list[str]], src: str, dst: str) -> list[list[
         for w in preds.get(u, ()):
             stack.append([w, *p])
     paths.sort()
-    return paths[:MAX_PATHS]
+    return paths[:max_paths]
 
 
-async def _hit_trace(rag, question: str, answer: str, trace: dict) -> dict:
+async def _hit_trace(
+    rag,
+    question: str,
+    answer: str,
+    trace: dict,
+    budget: RetrievalConfig | None = None,
+) -> dict:
     """把「检索器捞到什么」收敛成「答案落在哪条路径上」——三态分层，分数只作旁证。
 
     为什么不用分数决定去留：实体向量库 embed 的是「名字+描述」，它只懂「话题相似」，
@@ -160,6 +170,7 @@ async def _hit_trace(rag, question: str, answer: str, trace: dict) -> dict:
     「检索没做好」与「图里本来就没这个实体」（如问「张三认识姚明吗」而姚明从未入库）。
     向量库异常 → 不猜锚点、不分层，原样退回上下文（score=None），绝不编造。
     """
+    b = budget or RetrievalConfig()
     full_entities = trace.get("entities", [])
     full_relationships = trace.get("relationships", [])
 
@@ -190,13 +201,13 @@ async def _hit_trace(rag, question: str, answer: str, trace: dict) -> dict:
     def _degrade(mode: str) -> dict:
         trace["entities"] = [{**e, "score": None, "layer": None} for e in full_entities]
         trace["relationships"] = [{**r, "score": None, "layer": None} for r in full_relationships]
-        trace["hit_layers"] = _layers_shell(mode, unmatched)
+        trace["hit_layers"] = _layers_shell(mode, unmatched, budget=b)
         return trace
 
     # 分数：只用来（a）问题里没有字面实体名时兜底选锚点，（b）给候选排序和展示
     score_by_name: dict[str, float | None] = {}
     try:
-        results = await rag.entities_vdb.query(query_text, top_k=HIT_TOP_K)
+        results = await rag.entities_vdb.query(query_text, top_k=b.hit_top_k)
         for r in results or []:
             name = r.get("entity_name")
             if name is None:
@@ -240,7 +251,7 @@ async def _hit_trace(rag, question: str, answer: str, trace: dict) -> dict:
         pass
     adj = _undirected_adjacency([(str(r.get("src") or ""), str(r.get("tgt") or "")) for r in rel_by_key.values()])
 
-    hit_layers = _layers_shell(anchor_mode, unmatched)
+    hit_layers = _layers_shell(anchor_mode, unmatched, budget=b)
     hit_layers["anchors"] = list(anchors)
     hit_layers["cited"] = list(cited)
 
@@ -252,7 +263,7 @@ async def _hit_trace(rag, question: str, answer: str, trace: dict) -> dict:
     used_edges: set[frozenset] = set()
 
     def _record(u: str, v: str, kind: str) -> None:
-        paths = _shortest_paths(adj, u, v)
+        paths = _shortest_paths(adj, u, v, max_hops=b.max_hops, max_paths=b.max_paths)
         if not paths:
             hit_layers["disconnected"].append({"a": u, "b": v, "kind": kind})
             return
@@ -266,13 +277,13 @@ async def _hit_trace(rag, question: str, answer: str, trace: dict) -> dict:
         )
 
     for i, a in enumerate(anchors):
-        for b in anchors[i + 1:]:
-            _record(a, b, "anchor-anchor")
+        for other in anchors[i + 1:]:
+            _record(a, other, "anchor-anchor")
     for c in cited:
         cands = anchors or [t for t in node_layer if t != c]
         best: tuple[int, str] | None = None
         for a in cands:
-            paths = _shortest_paths(adj, c, a)
+            paths = _shortest_paths(adj, c, a, max_hops=b.max_hops, max_paths=b.max_paths)
             if paths and (best is None or len(paths[0]) < best[0]):
                 best = (len(paths[0]) - 1, a)
         if best is None:
@@ -316,7 +327,10 @@ async def _hit_trace(rag, question: str, answer: str, trace: dict) -> dict:
     return trace
 
 
-def _layers_shell(mode: str, unmatched: list[str] | None = None) -> dict:
+def _layers_shell(
+    mode: str, unmatched: list[str] | None = None, *, budget: RetrievalConfig | None = None
+) -> dict:
+    b = budget or RetrievalConfig()
     return {
         "anchor_mode": mode,
         "anchors": [],
@@ -325,9 +339,9 @@ def _layers_shell(mode: str, unmatched: list[str] | None = None) -> dict:
         "disconnected": [],
         "recall_only": [],
         "unmatched_keywords": list(unmatched or []),
-        "top_k": HIT_TOP_K,
-        "max_hops": MAX_HOPS,
-        "max_paths": MAX_PATHS,
+        "top_k": b.hit_top_k,
+        "max_hops": b.max_hops,
+        "max_paths": b.max_paths,
     }
 
 
@@ -337,6 +351,7 @@ async def query(
     mode: str = "mix",
     hl_keywords: list[str] | None = None,
     ll_keywords: list[str] | None = None,
+    budget: RetrievalConfig | None = None,
 ) -> QueryResult:
     """跑一次检索，返回答案 + 结构化 trace。
 
@@ -363,7 +378,7 @@ async def query(
             return QueryResult(question=question, answer=NOT_FOUND_ANSWER, trace=trace, trace_hit=False)
         # 分层要用答案文本做判据，所以答案先出、路径后算（aquery 自带一次检索，与旧版同量）
         answer = await rag.aquery(question, param)
-        trace = await _hit_trace(rag, question, answer or "", trace)
+        trace = await _hit_trace(rag, question, answer or "", trace, budget)
     else:
         # 无结果（failure_reason == "no_results"）→ 如实报告未命中，不报错不编造
         trace = {

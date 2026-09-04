@@ -91,6 +91,7 @@ def create_app(config=None) -> FastAPI:
         cfg = config if config is not None else load_config()
         rag = await init_rag(cfg)
         app.state.rag = rag
+        app.state.cfg = cfg
         yield
         await rag.finalize_storages()
 
@@ -233,7 +234,9 @@ def create_app(config=None) -> FastAPI:
 
     @app.get("/api/query")
     async def query_endpoint(question: str, request: Request):
-        result = await run_query(request.app.state.rag, question)
+        result = await run_query(
+            request.app.state.rag, question, budget=request.app.state.cfg.retrieval
+        )
         return {"answer": result.answer, "trace": result.trace, "trace_hit": result.trace_hit}
 
     # ---- 静态前端托管 ----

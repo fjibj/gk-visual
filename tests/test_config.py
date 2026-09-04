@@ -27,3 +27,21 @@ def test_load_config_env_override(monkeypatch):
     assert cfg.llm.model == "mock-model"
     assert cfg.embedding.provider == "mock"
     assert cfg.embedding.dim == 64
+
+
+def test_load_config_retrieval_defaults(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("GKB_"):
+            monkeypatch.delenv(k)
+    cfg = load_config()
+    assert cfg.retrieval.hit_top_k == 5
+    assert cfg.retrieval.max_hops == 4
+    assert cfg.retrieval.max_paths == 6
+
+
+def test_load_config_retrieval_env_override(monkeypatch):
+    monkeypatch.setenv("GKB_HIT_TOP_K", "3")
+    monkeypatch.setenv("GKB_MAX_HOPS", "1")
+    monkeypatch.setenv("GKB_MAX_PATHS", "2")
+    cfg = load_config()
+    assert (cfg.retrieval.hit_top_k, cfg.retrieval.max_hops, cfg.retrieval.max_paths) == (3, 1, 2)
