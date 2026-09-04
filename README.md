@@ -56,6 +56,7 @@ cp .env.example .env      # .env 已被 .gitignore 排除，密钥不会入库
 | `GKB_HIT_TOP_K` | `5` | 向量召回规模：只用于兜底锚点与给候选打分 |
 | `GKB_MAX_HOPS` | `4` | 锚点↔答案引用点最多连几跳，连不上就报「无路径」 |
 | `GKB_MAX_PATHS` | `6` | 等长最短路最多展示几条（有歧义时宁可全显示） |
+| `GKB_MAX_UPLOAD_MB` | `50` | 文件上传大小上限（S8） |
 
 后三个是「防爆炸上限」，不是调优旋钮：改它们不改变命中判据本身（锚点 / 答案引用 / 最短路），只改变允许多宽。判据的来历与五轮演进见 [`idsd/notes/retrieval-hit-and-highlight-encoding-log.md`](<idsd/notes/retrieval-hit-and-highlight-encoding-log.md>)。
 
@@ -78,7 +79,7 @@ cd frontend && npm install && npm run build && cd ..
 cd frontend && npm run dev
 ```
 
-UI 里能做的：上传/覆盖更新/删除文档、看图、改点改边、合并实体、检索并在图上看命中分层（实线环=锚点、虚线环=答案引用、更细的虚线=路径中间点；色温分轮次，角标 ¹²³ 标第几轮）。
+UI 里能做的：上传/覆盖更新/删除文档（支持文件 docx/xlsx/pptx/pdf/txt/md 与粘贴文本）、看图、改点改边、合并实体、检索并在图上看命中分层（实线环=锚点、虚线环=答案引用、更细的虚线=路径中间点；色温分轮次，角标 ¹²³ 标第几轮）。
 
 ## 5. CLI
 

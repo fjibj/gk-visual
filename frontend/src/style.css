@@ -146,6 +146,7 @@ body {
 #panel select {
   width: 100%;
   padding: 7px 9px;
+
   border: 1px solid #d0d7de;
   border-radius: 6px;
   font-size: 13px;
@@ -176,6 +177,15 @@ body {
   background: #1f6feb;
   border-color: #1f6feb;
   color: #fff;
+}
+
+#panel .file-row input[type='file'] {
+  flex: 1 1 60%;
+  min-width: 0;
+}
+
+#panel .file-row button {
+  flex: 0 0 auto;
 }
 
 #panel .row button.danger {

@@ -159,6 +159,21 @@ export const api = {
       relation_count: number
     }>('/api/documents', json('POST', { title, content })),
 
+  /** 真实文件上传：浏览器拼 multipart，后端解析成纯文本后走 S6 覆盖更新 */
+  uploadFile: (title: string | null, file: File) => {
+    const fd = new FormData()
+    if (title) fd.append('title', title)
+    fd.append('file', file, file.name)
+    return request<{
+      doc_id: string
+      title: string
+      chars: number
+      created: boolean
+      entity_count: number
+      relation_count: number
+    }>('/api/documents/upload', { method: 'POST', body: fd })
+  },
+
   deleteDocument: (docId: string) =>
     request<{ doc_id: string; status: string }>(
       `/api/documents/${encodeURIComponent(docId)}`,

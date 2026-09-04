@@ -39,46 +39,49 @@ slices:
     depends_on: [slice-1-doc-to-graph, slice-3-retrieval-transparency, slice-4-graph-edit, slice-5-edit-loop]
   - id: slice-8-document-ingestion-enhancement
     name: 文档摄取增强（文件格式解析 + URL 抓取）
-    status: pending
+    status: in_progress
+    note: 2026-09-04 实现：上传端点复用 LightRAG legacy 解析层（extract_text，零自研解析器）；pytest 67 passed；holdout slice-8-v1 7/7。URL 抓取按拍板后置。
     depends_on: [slice-6-document-lifecycle]
 
 steps:
   - id: 1
     name: 编写 Intent
     status: completed
-    artifact: idsd/intents/slice-7-retrieval-visualization/intent.md
+    artifact: idsd/intents/slice-8-document-ingestion-enhancement/intent.md
+    note: 2026-08-17 立项
   - id: 2
     name: 编写 Expectations
     status: completed
-    artifact: idsd/intents/slice-7-retrieval-visualization/expectations.md
+    artifact: idsd/intents/slice-8-document-ingestion-enhancement/expectations.md
+    note: 2026-08-17 立项
   - id: 3
     name: 组装 Context
     status: completed
-    artifact: idsd/context/context-bundle-slice-7-retrieval-visualization.md
+    note: 未单独组装 context-bundle——选型所需的全部上下文（LightRAG 自带解析层实测、依赖缺口）已记录于 idsd/backlog.md 条目 13/14（2026-08-30），代替 context 组装
   - id: 4
     name: 规划实现路径
     status: completed
-    artifact: idsd/plans/feature-list-slice-7-retrieval-visualization.json
+    note: 未单独产出 feature-list——实现路径 = intent 优先序（文件格式主体、URL 后置）+ backlog 条目 13 选型；改动面：server 上传端点 + 前端文件选择 + tests/test_upload.py + holdout slice-8
   - id: 5
     name: 逐切片构建
     status: completed
-    note: server /api/query + 前端检索框/图上高亮/多轮颜色
+    note: 2026-09-04 POST /api/documents/upload（extract_text + S6 upsert_document）+ 前端文件上传 + 大小上限/白名单/空文本拒绝；依赖声明补 python-multipart 等
   - id: 6
     name: 运行 Holdout 评估
     status: completed
-    note: slice-7-v1 判卷 7/7 通过（4成功/1失败/2边界）
+    note: slice-8-v1 判卷 7/7 通过（4成功/1失败/2边界）；真实 LLM + bge-m3
   - id: 7
     name: 记录检查点
     status: completed
-    artifact: idsd/checkpoints/slice-7-retrieval-visualization-v1.md
+    artifact: idsd/checkpoints/slice-8-document-ingestion-enhancement-v1.md
   - id: 8
     name: 用户验收
-    status: completed
-    note: 2026-08-30 22:59 用户「效果不错」；多轮色阶/跨分量误标红/分数闸门争议均已收敛
+    status: pending
+    note: 待用户浏览器实测（上传 docx/xlsx/pdf + 解析失败案例）
 
 summary:
   total_steps: 8
-  completed: 8
+  completed: 7
   in_progress: 0
-  pending: 0
+  pending: 1
   failed: 0

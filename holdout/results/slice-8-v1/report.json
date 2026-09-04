@@ -1,0 +1,57 @@
+{
+  "version": "slice-8-v1",
+  "timestamp": "2026-09-04T22:51:37.721045",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "category": "success",
+      "name": "s1_docx_to_graph",
+      "expectation": "Success 1: docx → 图长出实体，文档列表出现该文档",
+      "passed": true,
+      "detail": "entity_count=5 实体=['北京', '后端工程师', '字节跳动公司', '张三', '软件工程师'] 文档数=1"
+    },
+    {
+      "category": "success",
+      "name": "s2_xlsx_to_graph",
+      "expectation": "Success 3: xlsx → 单元格文本被解析进图",
+      "passed": true,
+      "detail": "entity_count=4 实体=['产品经理', '北京', '字节跳动公司', '李四'] 文档数=1"
+    },
+    {
+      "category": "success",
+      "name": "s3_pdf_to_graph",
+      "expectation": "Success 2: 文本型 pdf → 图长出，无乱码",
+      "passed": true,
+      "detail": "entity_count=4 实体=['Acme Inc', 'Alice', 'Bob', 'Boston'] 文档数=1"
+    },
+    {
+      "category": "success",
+      "name": "s4_reupload_cover_update",
+      "expectation": "Success 4: 同标题 .docx 重传 → 覆盖更新，旧版收敛",
+      "passed": true,
+      "detail": "r1.created=True r2.created=False len_v1=26 len_v2=15"
+    },
+    {
+      "category": "failure",
+      "name": "f1_corrupt_docx_rejected",
+      "expectation": "Failure 1: 损坏文件 → 解析报错，不产生任何实体/文档记录",
+      "passed": true,
+      "detail": "解析抛出 BadZipFile，文档数=0（应为 0）"
+    },
+    {
+      "category": "boundary",
+      "name": "b1_blank_pdf_no_text_layer",
+      "expectation": "Boundary 2: 扫描版 pdf → 空文本，入库前被拦截",
+      "passed": true,
+      "detail": "提取为空 ✓（文档数=0）"
+    },
+    {
+      "category": "boundary",
+      "name": "b2_multisheet_xlsx_all_sheets",
+      "expectation": "Boundary 3: 多工作表 xlsx → 所有表都进文本",
+      "passed": true,
+      "detail": "两张表都解析到（共 171 字符）"
+    }
+  ]
+}

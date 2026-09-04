@@ -55,6 +55,7 @@ class Config:
     working_dir: str = "./data"
     language: str = "Chinese"
     workspace: str = ""
+    max_upload_mb: int = 50
 
 
 def load_config() -> Config:
@@ -83,4 +84,5 @@ def load_config() -> Config:
         working_dir=_env("GKB_WORKING_DIR", "./data"),
         language=_env("GKB_LANGUAGE", "Chinese"),
         workspace=_env("GKB_WORKSPACE", ""),
+        max_upload_mb=int(_env("GKB_MAX_UPLOAD_MB", "50")),
     )

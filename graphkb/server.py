@@ -1,20 +1,27 @@
-"""HTTP 服务：FastAPI 图 CRUD + 静态托管前端。
+"""HTTP 服务：FastAPI 图 CRUD + 文档上传/解析 + 静态托管前端。
 
 落库完全复用 LightRAG 编辑 API（acreate_*/aedit_*/adelete_by_*/amerge_entities）。
 编辑操作即时落盘（LightRAG 图存储 upsert 即时写盘，已 spike 验证），
 故每个写操作后无需 finalize；仅进程关闭时 finalize 释放资源。
+
+文档上传（/api/documents/upload）：格式解析复用 LightRAG 自带 legacy 解析层
+（lightrag.parser.legacy.extract_text，内部按需 import pypdf/python-docx/
+python-pptx/openpyxl），本项目不写任何格式解析器；解析出纯文本后走 S6 的
+upsert_document 管线（标题 slug = doc_id，同标题重传即覆盖更新）。
 """
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from lightrag.parser.legacy import LegacyExtractionError, extract_text
 from pydantic import BaseModel
 
 from .config import load_config
@@ -53,6 +60,10 @@ class MergeBody(BaseModel):
 class DocumentBody(BaseModel):
     title: str
     content: str
+
+
+# 上传允许的格式（白名单）。txt/md 走解码，其余交给 LightRAG legacy 解析器。
+SUPPORTED_UPLOAD_SUFFIXES = frozenset({"txt", "md", "docx", "xlsx", "pptx", "pdf"})
 
 
 # ---- 读图 ----
@@ -213,6 +224,68 @@ def create_app(config=None) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"上传文档失败: {exc}") from exc
         return {
             "doc_id": result.doc_id,
+            "created": result.created,
+            "entity_count": result.entity_count,
+            "relation_count": result.relation_count,
+        }
+
+    @app.post("/api/documents/upload", status_code=201)
+    async def upload_document_file(
+        request: Request,
+        file: UploadFile = File(...),
+        title: str | None = Form(default=None),
+    ):
+        """上传真实文件 → 解析成纯文本 → 走 S6 upsert_document（同标题 = 覆盖更新）。
+
+        解析失败/不支持格式/抽不出文本一律 4xx 明说，绝不静默入库（Failure 2/3/5）。
+        大小上限读配置（GKB_MAX_UPLOAD_MB，默认 50MB），超限直接 413。
+        """
+        filename = (file.filename or "").strip()
+        suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if suffix not in SUPPORTED_UPLOAD_SUFFIXES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的文件格式「{suffix or '(无扩展名)'}」。支持: "
+                f"{', '.join(sorted(SUPPORTED_UPLOAD_SUFFIXES))}",
+            )
+
+        max_mb = request.app.state.cfg.max_upload_mb
+        max_bytes = max_mb * 1024 * 1024
+        data = await file.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise HTTPException(
+                status_code=413, detail=f"文件超过大小上限 {max_mb}MB，已拒绝"
+            )
+        if not data:
+            raise HTTPException(status_code=400, detail="空文件")
+
+        try:
+            # 解析是同步 CPU 活，丢线程避免卡事件循环
+            text = await asyncio.to_thread(extract_text, data, suffix)
+        except LegacyExtractionError as exc:
+            raise HTTPException(status_code=400, detail=f"文件解析失败: {exc}") from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件解析失败（文件可能已损坏或格式不符）: {type(exc).__name__}: {exc}",
+            ) from exc
+        text = text.strip()
+        if not text:
+            raise HTTPException(
+                status_code=400,
+                detail="该文件抽不出文本（若是 PDF，可能是扫描版无文本层，需 OCR）",
+            )
+
+        stem = filename.rsplit(".", 1)[0].strip() or "untitled"
+        doc_title = (title or "").strip() or stem
+        try:
+            result = await upsert_document(request.app.state.rag, doc_title, text)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"入库失败: {exc}") from exc
+        return {
+            "doc_id": result.doc_id,
+            "title": doc_title,
+            "chars": len(text),
             "created": result.created,
             "entity_count": result.entity_count,
             "relation_count": result.relation_count,

@@ -475,14 +475,45 @@ function showDocumentsPanel() {
     `
       <label>文档标题</label>
       <input id="d-title" placeholder="同一标题重复上传 = 覆盖更新" />
-      <label>文档内容</label>
+      <label>上传文件（docx / xlsx / pptx / pdf / txt / md）</label>
+      <div class="row file-row">
+        <input type="file" id="d-file" accept=".txt,.md,.docx,.xlsx,.pptx,.pdf" />
+        <button class="primary" id="a-upload-file">上传文件</button>
+      </div>
+      <label>或粘贴文本</label>
       <textarea id="d-content" placeholder="粘贴文档文本..."></textarea>
       <div class="doc-list" id="d-list"></div>
     `,
     `<div class="row"><button class="primary" id="a-upload">上传 / 更新</button></div>`,
   )
   document.getElementById('a-upload')!.onclick = uploadDocument
+  document.getElementById('a-upload-file')!.onclick = uploadFileDocument
   renderDocList()
+}
+
+async function uploadFileDocument() {
+  const input = document.getElementById('d-file') as HTMLInputElement
+  const file = input.files && input.files[0]
+  if (!file) return setStatus('请先选择文件', true)
+  const title = (document.getElementById('d-title') as HTMLInputElement).value.trim()
+  const btn = document.getElementById('a-upload-file') as HTMLButtonElement
+  btn.disabled = true
+  btn.textContent = '解析中…'
+  setStatus(`正在解析「${file.name}」并构建图谱，可能需要 20–30 秒，请勿关闭…`)
+  try {
+    const r = await api.uploadFile(title || null, file)
+    setStatus(
+      `文档「${r.title}」${r.created ? '已上传' : '已更新'}：${r.entity_count} 实体 · ${r.relation_count} 关系（${file.name}）`,
+    )
+    input.value = ''
+    await renderDocList()
+    await loadGraph()
+  } catch (err) {
+    setStatus(`上传失败: ${(err as Error).message}`, true)
+  } finally {
+    btn.disabled = false
+    btn.textContent = '上传文件'
+  }
 }
 
 async function renderDocList() {
