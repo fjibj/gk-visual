@@ -68,12 +68,12 @@
 
 ## 8. 文档摄取增强（文件格式 + URL 抓取）
 
-- **状态**：已立项 S8，**前置闸门已解除**（用户 2026-08-17 拍板「S8 可以先立，等我验证完 S6、S7 之后再做」；S6/S7 均于 2026-08-30 验收通过）。开工与否待用户点名。
-- **选型更新（2026-08-30 实测）**：不必自写四个适配器——LightRAG 1.5.6 自带 `lightrag.parser.legacy.extract_text`，见条目 13。
-- **内容**：当前文档上传只支持粘贴纯文本；真实文件（docx/xlsx/pptx/pdf/txt/md）解析 + URL 抓取是缺口。
-- **优先级**：文件格式解析 = 主体先做（更安全更常用）；URL 抓取 = 后置子项（安全面大：SSRF/超时/大小限制/robots）。
-- **实现线索**：格式适配层只做「字节/URL → 纯文本」，下游复用 S6 `ingest_document` + `POST /api/documents`；解析直接调 `lightrag.parser.legacy.extract_text`（原方案的 python-docx/openpyxl/pypdf/python-pptx 正是它的内部依赖）。
-- **详见**：`idsd/intents/slice-8-document-ingestion-enhancement/`。
+- **状态**：**文件格式部分已实现**（S8，2026-09-04 提交 `5be9746`，holdout 7/7，人工验收用户主动延后）；**URL 抓取 = 后置待拍板**。
+- **立项时盘点**：当前文档上传只支持粘贴纯文本；真实文件（docx/xlsx/pptx/pdf/txt/md）解析 + URL 抓取是缺口。
+- **优先级**：文件格式解析 = 主体先做（已完成）；URL 抓取 = 后置子项（安全面大：SSRF/超时/大小限制/robots）。
+- **实现结果**：适配层只做了「字节 → 纯文本」一步，直接调 `lightrag.parser.legacy.extract_text`（见条目 13），下游复用 S6 `upsert_document`；新增 `POST /api/documents/upload`。
+- **URL 子项开工前必读**：legacy 解析层对 `html` **只做 UTF-8 解码、不去标签**（实测 `_BINARY_EXTRACTORS` 只有 pdf/docx/pptx/xlsx 四个），所以拓回网页后还得自备一步「HTML → 正文」（要嘛加 bs4/markdownify/readability 依赖，要嘛写一小段去标签）；另需 SSRF 白名单与超时/大小上限。
+- **详见**：`idsd/intents/slice-8-document-ingestion-enhancement/`、`idsd/checkpoints/slice-8-document-ingestion-enhancement-v1.md`。
 
 ## 9. 实体/边溯源标签（LLM 抽取 vs 手工创建）
 
@@ -109,7 +109,7 @@
 
 ## 13. S8 选型证据：LightRAG 自带解析层，可零自研
 
-- **状态**：已查证（2026-08-30，为 S8 开工做准备，未开工）。结论：**S8 的「文件格式解析」主体可以一行解析代码都不写**。
+- **状态**：**已落地**（S8 就是按这个选型做的，`5be9746`，holdout 7/7）。以下为当时的实测记录，保留备查。
 - **实测入口**（`site-packages/lightrag/parser/legacy/extractors.py`）：
   ```python
   from lightrag.parser.legacy import extract_text, LegacyExtractionError
@@ -119,10 +119,10 @@
 - **支持范围**：`legacy` 引擎覆盖 `txt md mdx pdf docx pptx xlsx rtf odt tex epub html htm csv json xml yaml yml log conf ini properties sql …`；内部按需延迟 import `pypdf` / `docx` / `pptx` / `openpyxl`（docx 表格、xlsx 多 sheet 已转成带转义的 markdown 表格），其余后缀走 `_decode_text`。
 - **另有**：`native` 引擎（docx/md/textpack，带 LLM 标题判定）、`external/mineru|docling`（远程服务，需 `MINERU_LOCAL_ENDPOINT`/`MINERU_API_TOKEN`/`DOCLING_ENDPOINT`，支持 pdf/图片）。**S8 不需要它们**——结构化版面还原属天花板，先用 legacy 的纯文本。
 - **调试便利**：`python -m lightrag.parser.cli` 可单文件跨引擎跑解析，S8 排错时可直接用。
-- **开工前置（硬）**：
+- **开工前置（硬）**（两者均已于 2026-09-04 完成）：
   1. `python-multipart` **当前未安装**，而 FastAPI 的 `UploadFile`/`Form` 必须有它——上传端点一上就报 `Form data requires "python-multipart" to be installed`。
   2. `pyproject.toml` 依赖声明不全：本项目 `dependencies = ["lightrag-hku", "httpx", "python-dotenv"]`，而 `fastapi`/`uvicorn`/`python-docx`/`python-pptx`/`openpyxl`/`pypdf` **全部只存在于 `lightrag-hku[api]` extra**。当前机器能跑是因为装了带 extra 的版本；换机 `pip install -e .` 后 server 与解析都会缺包。修法二选一：把依赖写成 `lightrag-hku[api]`，或显式列出 fastapi/uvicorn/python-multipart + 四个解析库。
-- **待 spike**：大文件解析耗时（同步函数放 `asyncio.to_thread`，UI 已有 loading 态可复用）；空文本/纯图 PDF（pypdf 抽不出字）的报错文案；大小上限具体值。
+- **待 spike**：大文件解析耗时（同步函数放 `asyncio.to_thread`，UI 已有 loading 态可复用）；空文本/纯图 PDF（pypdf 抽不出字）的报错文案；大小上限具体值。（均已在 S8 实现：to_thread + 400「抽不出文本」 + `GKB_MAX_UPLOAD_MB=50`）
 
 ## 14. 工程债：无 README、无 CI、参数未配置化
 
@@ -134,3 +134,13 @@
   - `graphkb.cli` 新增 `serve` 子命令（--host/--port/--reload）；`.env.example` 补 GKB_WORKSPACE 与三个预算变量。
 - **未还**：CI 入口（本仓库还没有 git remote，GitHub Actions 写了也没法跑）；前端色温/形态档位仍硬编码在 `main.ts`（跨 TS/Python 边界，收益低，后置）。
 
+## 15. 非 UTF-8 文本文件（GBK）会被拒
+
+- **状态**：候选，未排期。发现于 S8 实测（2026-09-06）。
+- **现象**：legacy 解析层的 `_decode_text` **只认 UTF-8**（实测：`file_bytes.decode("utf-8")` 失败即抛 `LegacyExtractionError("File is not valid UTF-8 encoded text. Please convert it to UTF-8 before processing")`），空内容/纯空白也靠它报错。于是上传 GBK/GB18030 存的 `.txt/.md/.csv`（Windows 记事本旧文件的常态）会被 400 拒，且错误文案是英文。
+- **为什么值得管**：中文用户脚踢频率高；而拒收本身是对的（不能拿乱码喂图），只是体验硬。
+- **候选做法**：
+  1. 只改文案：把这条英文错转成中文提示「请用 UTF-8 另存后重试」（零风险，不碰解析）；
+  2. 在我们适配层加一次 encoding 退避：先 UTF-8，失败再试 gb18030，成功则重编码为 UTF-8 后交给 `extract_text`（约 6 行，属于一条小规则，吃得住约束 6）；
+  3. 上探测库（chardet/charset-normalizer）——多一个依赖，杀鸡用牛刀。
+- **建议**：1+2 一起做（先试退避，再不成给中文错），归入一个小的收尾切片或跟 URL 拓取同片做。
