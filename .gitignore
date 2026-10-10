@@ -17,6 +17,7 @@ inputs/
 
 # pytest basetemp（项目内临时目录）
 .pytest_tmp/
+.pytest_cache/
 
 # OS
 .DS_Store

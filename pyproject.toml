@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graphkb"
 version = "0.1.0"
-description = "Transparent, editable personal knowledge base (IDSD slice-1)"
+description = "Transparent, editable personal knowledge base: documents into a knowledge graph, with explainable retrieval hits"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -28,6 +28,11 @@ dependencies = [
 
 [project.scripts]
 graphkb = "graphkb.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/fjibj/gk-visual"
+Repository = "https://github.com/fjibj/gk-visual"
+Issues = "https://github.com/fjibj/gk-visual/issues"
 
 [project.optional-dependencies]
 dev = ["pytest"]

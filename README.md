@@ -1,6 +1,8 @@
-# graph-knowledge-base（graphkb）
+# gk-visual（Python 包名 `graphkb`）
 
 透明、可手工编辑的个人知识库：把文档抽成图谱，**检索过程看得见**，**图人也能改**。
+
+> 仓库名 `gk-visual`，代码里的包名/CLI 名保持 `graphkb`（不改导入路径）。持续更新中，进度与已决事项见 §8。
 
 两条主张决定了这套代码的形状：
 
@@ -23,7 +25,7 @@
 ## 2. 安装
 
 ```bash
-git clone <your-repo> && cd graph-knowledge-base
+git clone https://github.com/fjibj/gk-visual.git && cd gk-visual
 python -m venv .venv && . .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -e .                                  # 核心 + server + 文件解析依赖
 pip install -e ".[dev]"                            # 加 pytest
@@ -97,8 +99,9 @@ python -m graphkb.cli serve --port 8001 --reload            # 换端口 / 后端
 ## 6. 验证
 
 ```bash
-python -m pytest -q                                   # 单元测试（当前 51 passed）
+python -m pytest -q                                   # 单元测试（当前 67 passed，全程离线，LLM/embedding 走 mock）
 python holdout/evaluate.py slice-7-retrieval-visualization --version slice-7-v1
+python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slice-8-v1
 ```
 
 holdout 是 IDSD 的「考卷区」：场景由 `expectations.md` 派生、不回看实现，构建期对代理不可见（见 `holdout/README.md` 与 `.claudeignore`）。判卷结果存档在 `holdout/results/<版本>/report.json`。
@@ -130,9 +133,18 @@ data/            # 库本体（gitignore）
 - 总意图与硬约束：[`idsd/intents/overall/intent.md`](<idsd/intents/overall/intent.md>)（其中约束 1 锁死「图引擎复用 LightRAG」，所以本项目是 Python-only 后端；约束 6 是「规则预算 ≤ 1」，能靠结构判据解决的就不加关键词规则）。
 - 每个切片为什么做成这样：`idsd/checkpoints/`。
 - 当下明确不做的事（含理由）：[`idsd/backlog.md`](<idsd/backlog.md>)。
-- 进度：`idsd/idsd-status.yaml`（S1–S7 已验收收官，S8「文档摄取增强」已立项待开工）。
+- 进度：[`idsd/idsd-status.yaml`](<idsd/idsd-status.yaml>)（S1–S7 验收收官；S8「文档摄取增强」已实现并跑通 pytest 与 holdout，浏览器端的人工验收待做）。
 
-## 9. 安全注意
+## 9. 已知边界（诚实的局限）
+
+- **高亮跟着答案措辞走**：命中判据里的「答案引用」来自 LLM 答案文本，答案若只用代词或换一种说法，对应实体可能不进红圈——兜底是答案面板里的「捞到未用」列表，它保证召回可见，但不替你判定。
+- **孤立实体不被召回**：图里没有连边的实体不会进入检索结果（LightRAG dual-level 检索的固有行为，见 [`idsd/backlog.md`](<idsd/backlog.md>) 条目 4）。
+- **图长大后「簇」信号会退化**：现在靠「锚点 + 答案引用 + 最短路」定高亮；若图长成单个大连通分量，簇数就失去区分意义，只剩前两者有效。
+- **前端色温/形态档位写死**：`frontend/src/main.ts` 里的轮次配色与环形态是常量，没做成配置项（跨 TS/Python 边界，收益低，明确后置）。
+- **URL 抓取未做**：S8 只做了本地文件解析；网页抓取涉及 SSRF/超时/正文抽取，需单独切片。
+- **没有鉴权、没有 CI**：`serve` 只该绑 `127.0.0.1`；测试是本地手跑的（本仓库此前无远端，CI 待补）。
+
+## 10. 安全注意
 
 - LLM/embedding 密钥只放本地 `.env`（已 gitignore），不要提交、不要贴进文档。
 - `serve` 默认绑 `127.0.0.1`，别在公网机器上直接 `--host 0.0.0.0`——UI 没有任何鉴权。
