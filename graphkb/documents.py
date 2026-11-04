@@ -55,9 +55,20 @@ async def _doc_entity_relation_counts(rag, chunks_list: list[str]) -> tuple[int,
     return e, r
 
 
+async def _processed_docs(rag) -> dict:
+    """已处理文档表 {doc_id: DocProcessingStatus}。
+
+    LightRAG 1.5.7 删掉了 facade 方法 `rag.get_docs_by_status(status)`（升上去直接
+    AttributeError——CI 在 1.5.7 上就是这么红的）；能力搬到了底层
+    `doc_status.get_docs_by_statuses(statuses, strict=False)`，而 1.5.6 也早就有这个。
+    走底层 = 两个版本都能跑，不必把 lightrag 钉死在旧版。
+    """
+    return await rag.doc_status.get_docs_by_statuses([DocStatus.PROCESSED])
+
+
 async def list_documents(rag) -> list[DocumentInfo]:
     """列出已处理文档（含各自贡献的实体/关系数）。"""
-    docs = await rag.get_docs_by_status(DocStatus.PROCESSED)
+    docs = await _processed_docs(rag)
     result = []
     for doc_id, st in docs.items():
         e, r = await _doc_entity_relation_counts(rag, st.chunks_list or [])
@@ -82,14 +93,14 @@ async def upsert_document(rag, title: str, content: str) -> UpsertResult:
     if not str(content).strip():
         raise ValueError("文档内容不能为空")
     doc_id = slugify(title)
-    docs = await rag.get_docs_by_status(DocStatus.PROCESSED)
+    docs = await _processed_docs(rag)
     existed = doc_id in docs
     if existed:
         await rag.adelete_by_doc_id(doc_id)
 
     await rag.ainsert(content, ids=[doc_id], file_paths=[str(title).strip() or doc_id])
 
-    docs = await rag.get_docs_by_status(DocStatus.PROCESSED)
+    docs = await _processed_docs(rag)
     st = docs.get(doc_id)
     e, r = await _doc_entity_relation_counts(rag, st.chunks_list if st else [])
     return UpsertResult(

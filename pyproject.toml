@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     # 图引擎：约束 1 要求复用 LightRAG。[api] extra 带来它的解析层
     # （lightrag.parser.legacy.extract_text）与 server 依赖。
-    "lightrag-hku[api]>=1.5.6",
+    "lightrag-hku[api]>=1.5.6,<1.6",  # 1.5.7 已验证（doc_status 底层接口）；1.6 若再动，先让 CI 说话
     "httpx",
     "python-dotenv",
     # server 自己直接 import 的东西，不靠上游 extra 的副作用：

@@ -27,14 +27,26 @@ class _FakeGraph:
         return self.edges
 
 
+class _FakeDocStatus:
+    """底层文档状态存储：`get_docs_by_statuses([status])` 是 1.5.6 / 1.5.7 都在的接口。
+
+    documents.py 走 `rag.doc_status` 而不是已在下游被删的 facade `rag.get_docs_by_status`，
+    所以这里的假对象也按底层形状来。
+    """
+
+    def __init__(self, docs: dict):
+        self._docs = docs
+
+    async def get_docs_by_statuses(self, statuses, strict=False):
+        return self._docs
+
+
 class _FakeRag:
     def __init__(self, nodes, edges):
         self.docs: dict = {}
         self.calls: list = []
         self.chunk_entity_relation_graph = _FakeGraph(nodes, edges)
-
-    async def get_docs_by_status(self, status):
-        return self.docs
+        self.doc_status = _FakeDocStatus(self.docs)
 
     async def ainsert(self, text, ids=None, file_paths=None):
         self.calls.append(("insert", ids))

@@ -144,3 +144,11 @@
   2. 在我们适配层加一次 encoding 退避：先 UTF-8，失败再试 gb18030，成功则重编码为 UTF-8 后交给 `extract_text`（约 6 行，属于一条小规则，吃得住约束 6）；
   3. 上探测库（chardet/charset-normalizer）——多一个依赖，杀鸡用牛刀。
 - **建议**：1+2 一起做（先试退避，再不成给中文错），归入一个小的收尾切片或跟 URL 拓取同片做。
+
+## 16. LightRAG 1.5.7 删了 facade `get_docs_by_status`
+
+- **状态**：已修（2026-11-04，M0 补 CI 时被 CI 当场抓出）。
+- **现象**：`pyproject.toml` 只写了 `lightrag-hku[api]>=1.5.6`，CI 装到 1.5.7 → `tests/test_upload.py` 三个上传用例脱 400，报 `'LightRAG' object has no attribute 'get_docs_by_status'`。本地是 1.5.6，所以一直没暴露。
+- **实测差异**（对比两边 wheel 里的 `lightrag/lightrag.py`）：1.5.7 删掉了 `get_docs_by_status(status)`，也没在同层加替代方法；能力搬到底层 `doc_status.get_docs_by_statuses(statuses: list[DocStatus], strict=False) -> dict[str, DocProcessingStatus]`，**1.5.6 也早就有这个**。
+- **改法**：`graphkb/documents.py` 三处调用改走 `rag.doc_status.get_docs_by_statuses([DocStatus.PROCESSED])`（收进 `_processed_docs()`），不把 lightrag 钉死在 1.5.6；`pyproject.toml` 同时加下界 `>=1.5.6,<1.6`——1.6 再动就等 CI 说话。
+- **残留**：holdout 没在 1.5.7 上跑过（CI 只跑 pytest）；下次升级 lightrag 前，本地先跑一遍 S3/S5/S7/S8。
