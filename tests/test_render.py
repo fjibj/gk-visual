@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from graphkb.config import RetrievalConfig
 from graphkb.query import (
     QueryResult,
@@ -343,3 +345,53 @@ def test_render_no_score():
     )
     text = render(result)
     assert "无分数" in text
+
+
+# ---- M1：_hit_trace 双文本判据（anchor_text / evidence_text）----
+
+
+def test_hit_trace_evidence_from_task_text():
+    """Agent 面：锚点取自 anchor_text、证据取自 evidence_text，两者是不同文本。
+
+    人问时是 (问题, 答案)，Agent 用时是 (context.query, context.task)——判据逻辑不变，
+    变的只是“哪段文本负责锚点、哪段负责证据”。
+    """
+    rag = _FakeRag(entities_vdb=_FakeVdb([{"entity_name": "周杰伦", "distance": 0.62}]))
+    trace = _trace(
+        ["周杰伦", "演唱会", "台北"],
+        [("周杰伦", "演唱会"), ("演唱会", "台北")],
+    )
+    out = asyncio.run(
+        _hit_trace(
+            rag,
+            anchor_text="周杰伦上次那个演唱会的事",
+            evidence_text="接着把台北场地的搭建盯完",
+            trace=trace,
+        )
+    )
+
+    assert out["hit_layers"]["anchors"] == ["周杰伦", "演唱会"]
+    assert out["hit_layers"]["cited"] == ["台北"]  # 只可能来自 evidence_text
+    assert _layers(out) == {"周杰伦": "anchor", "演唱会": "anchor", "台北": "cited"}
+
+
+def test_hit_trace_rejects_equal_texts():
+    """两参相等必须报错：相等时证据层会塌成空、paths 退化成锚点全排列噪声。
+
+    探针 B §4 实测（2026-11-04，8 个锚点）：
+        anchors = 8 · cited = [] · paths = 28   ← 28 = C(8,2)，不是命中 28 条，是噪声
+    所以接口层不接受“单参数调用”，这条防的就是有人图省事把同一个文本传两遍——
+    那样高亮看起来照样“有颜色”，但证据位已经死了。
+    """
+    rag = _FakeRag(entities_vdb=_FakeVdb([{"entity_name": "张三", "distance": 0.5}]))
+    trace = _trace(["张三", "字节跳动"], [("字节跳动", "张三")], ll_kw=["张三"])
+
+    with pytest.raises(ValueError, match="不能相等"):
+        asyncio.run(
+            _hit_trace(
+                rag,
+                anchor_text="张三在哪工作",
+                evidence_text="张三在哪工作",
+                trace=trace,
+            )
+        )

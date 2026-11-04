@@ -148,20 +148,26 @@ def _shortest_paths(
 
 async def _hit_trace(
     rag,
-    question: str,
-    answer: str,
+    anchor_text: str,
+    evidence_text: str,
     trace: dict,
     budget: RetrievalConfig | None = None,
 ) -> dict:
     """把「检索器捞到什么」收敛成「答案落在哪条路径上」——三态分层，分数只作旁证。
+
+    两块文本各管一段（M1 双文本改造，判据逻辑本身一行未改）：
+      anchor_text   → 锚点：这段文本里字面出现的图实体名
+      evidence_text → 证据：这段文本里字面引用的图实体名（+ 连接锚点的最短路）
+    人问：anchor_text=问题、evidence_text=答案；
+    Agent：anchor_text=context.query、evidence_text=context.task。
 
     为什么不用分数决定去留：实体向量库 embed 的是「名字+描述」，它只懂「话题相似」，
     不懂「问题问的是不是它」。问「腾讯总部在哪」时「字节跳动」（描述含“总部位于北京”）
     会进 top_k；问「蔡依林和周杰伦」时答案主语「台北」的比值正好卡在 0.80 边界——
     任何阈值都是运气，不是判据。所以取舍改由两个可调用的结构判据决定：
 
-      锚点 = 问题里字面出现的图实体名（零参数、可复算）
-      证据 = 答案里字面引用的图实体名 + 连接它们的最短路径（连通性由构造保证）
+      锚点 = anchor_text 里字面出现的图实体名（零参数、可复算）
+      证据 = evidence_text 里字面引用的图实体名 + 连接它们的最短路径（连通性由构造保证）
       仅召回 = 向量捞到但两者都不是 → 不着色，只在候选列表里带着分数展示
 
     一题的高亮因此是「若干连通簇」：对比题（「腾讯和字节跳动的总部」）天然得到两个簇，
@@ -169,7 +175,19 @@ async def _hit_trace(
     另将 ll_keywords 里图上查无此名的关键词记进 unmatched_keywords，用来分辨
     「检索没做好」与「图里本来就没这个实体」（如问「张三认识姚明吗」而姚明从未入库）。
     向量库异常 → 不猜锚点、不分层，原样退回上下文（score=None），绝不编造。
+
+    两参相等一律报错（不警告、不降级）：相等时 evidence_text 里的每个实体必然也是锚点，
+    `cited` 被锚点豁免成空，paths 只剩锚点两两全排列——探针 B §4 实测（8 个锚点）
+    cited=[]、paths=28（C(8,2)）。那种状态下高亮照样上色、看着“正常”，但证据位已经死了，
+    属于只会骗人的假信号。
     """
+    if anchor_text == evidence_text:
+        raise ValueError(
+            "anchor_text 与 evidence_text 不能相等"
+            "（证据层会塌成空、paths 退化成锚点全排列噪声）；"
+            "人问请传 (问题, 答案)，Agent 请传 (context.query, context.task)"
+        )
+
     b = budget or RetrievalConfig()
     full_entities = trace.get("entities", [])
     full_relationships = trace.get("relationships", [])
@@ -186,12 +204,12 @@ async def _hit_trace(
 
     keywords = trace.get("keywords", {}) or {}
     ll_kw = [str(k) for k in (keywords.get("low_level") or [])]
-    query_text = ", ".join(ll_kw) if ll_kw else question
+    query_text = ", ".join(ll_kw) if ll_kw else anchor_text
     # 问题抽出的低层关键词里，哪些在图上根本不存在——这跟「检索坏了」不是一回事，
     # 是图本身缺东西（没写过、或实体没对齐），得单独告知，不能闷在红圈里。
     # LLM 有时把短语（「张三的公司」）也当成低层关键词，这类能包回已匹配实体名的不当作缺实体。
     pool_set = set(pool)
-    q_names = _literal_names(question, pool)
+    q_names = _literal_names(anchor_text, pool)
     unmatched = [
         k
         for k in ll_kw
@@ -217,7 +235,7 @@ async def _hit_trace(
         return _degrade("vdb_error")
 
     anchors = q_names
-    cited = [n for n in _literal_names(answer, pool) if n not in anchors]
+    cited = [n for n in _literal_names(evidence_text, pool) if n not in anchors]
     anchor_mode = "literal"
     if not anchors:
         # 兜底锥点也只能从检索到的上下文里选：高亮集不得跑到上下文之外
@@ -352,11 +370,19 @@ async def query(
     hl_keywords: list[str] | None = None,
     ll_keywords: list[str] | None = None,
     budget: RetrievalConfig | None = None,
+    *,
+    anchor_text: str | None = None,
+    evidence_text: str | None = None,
 ) -> QueryResult:
     """跑一次检索，返回答案 + 结构化 trace。
 
     hl_keywords / ll_keywords 为空时由 LightRAG 走 LLM 关键词抽取；显式传入则跳过，
     用于确定性测试。
+
+    双文本判据（M1）：`anchor_text` 管锚点、`evidence_text` 管证据，缺省分别回落到
+    `question` 与答案文本（人问场景行为不变）。Agent 场景传
+    `anchor_text=context.query · evidence_text=context.task`，证据位就不再依赖 LLM 答案的措辞。
+    两者相等会抛 ValueError（见 `_hit_trace`：相等时证据层塔成空）。
     """
     param = QueryParam(
         mode=mode,
@@ -378,7 +404,13 @@ async def query(
             return QueryResult(question=question, answer=NOT_FOUND_ANSWER, trace=trace, trace_hit=False)
         # 分层要用答案文本做判据，所以答案先出、路径后算（aquery 自带一次检索，与旧版同量）
         answer = await rag.aquery(question, param)
-        trace = await _hit_trace(rag, question, answer or "", trace, budget)
+        trace = await _hit_trace(
+            rag,
+            anchor_text if anchor_text is not None else question,
+            evidence_text if evidence_text is not None else (answer or ""),
+            trace,
+            budget,
+        )
     else:
         # 无结果（failure_reason == "no_results"）→ 如实报告未命中，不报错不编造
         trace = {
