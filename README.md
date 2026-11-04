@@ -4,6 +4,8 @@
 
 > 仓库名 `gk-visual`，代码里的包名/CLI 名保持 `graphkb`（不改导入路径）。持续更新中，进度与已决事项见 §8。
 
+[![CI](https://github.com/fjibj/gk-visual/actions/workflows/ci.yml/badge.svg)](https://github.com/fjibj/gk-visual/actions/workflows/ci.yml)
+
 两条主张决定了这套代码的形状：
 
 - **透明**：每次检索都吐出结构化 `trace`（捞到什么、凭什么判定命中、哪些没被用上）。前端图上的高亮就是这个 trace 的直接投影，不是事后美化。
@@ -142,9 +144,16 @@ data/            # 库本体（gitignore）
 - **图长大后「簇」信号会退化**：现在靠「锚点 + 答案引用 + 最短路」定高亮；若图长成单个大连通分量，簇数就失去区分意义，只剩前两者有效。
 - **前端色温/形态档位写死**：`frontend/src/main.ts` 里的轮次配色与环形态是常量，没做成配置项（跨 TS/Python 边界，收益低，明确后置）。
 - **URL 抓取未做**：S8 只做了本地文件解析；网页抓取涉及 SSRF/超时/正文抽取，需单独切片。
-- **没有鉴权、没有 CI**：`serve` 只该绑 `127.0.0.1`；测试是本地手跑的（本仓库此前无远端，CI 待补）。
+- **没有鉴权**：`serve` 只该绑 `127.0.0.1`，别指望它挡人。CI 只覆盖 pytest 与前端构建（`.github/workflows/ci.yml`），**不覆盖 holdout**——那要跑真模型，成本与稳定性都不适合放 CI。
 
-## 10. 安全注意
+## 10. 下一步：Agent 记忆面（MCP）
+
+本仓库下一步是把它从「人查知识库」扩成「**也能给 Agent 当记忆后端**」：加一层 MCP 外壳（`memory.search / memory.ingest / memory.ingest_status`），harness 干活时自动存、下次任务自动想起，注入有预算、过程可审计。
+
+- 路径上的第一块砖是**判据双文本改造**：`_hit_trace(anchor_text, evidence_text)` —— 人问时 `anchor_text=问题 · evidence_text=答案`，Agent 用时 `anchor_text=context.query · evidence_text=context.task`，判据逻辑一行不改。
+- 设计输入见 [`idsd/notes/`](<idsd/notes/>) 与计划书；双探针（接口通路 / 判据在 agent 场景的实测）已完成，结论是「任务文本能顶替答案当证据位」。
+
+## 11. 安全注意
 
 - LLM/embedding 密钥只放本地 `.env`（已 gitignore），不要提交、不要贴进文档。
 - `serve` 默认绑 `127.0.0.1`，别在公网机器上直接 `--host 0.0.0.0`——UI 没有任何鉴权。
