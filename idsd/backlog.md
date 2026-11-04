@@ -152,3 +152,15 @@
 - **实测差异**（对比两边 wheel 里的 `lightrag/lightrag.py`）：1.5.7 删掉了 `get_docs_by_status(status)`，也没在同层加替代方法；能力搬到底层 `doc_status.get_docs_by_statuses(statuses: list[DocStatus], strict=False) -> dict[str, DocProcessingStatus]`，**1.5.6 也早就有这个**。
 - **改法**：`graphkb/documents.py` 三处调用改走 `rag.doc_status.get_docs_by_statuses([DocStatus.PROCESSED])`（收进 `_processed_docs()`），不把 lightrag 钉死在 1.5.6；`pyproject.toml` 同时加下界 `>=1.5.6,<1.6`——1.6 再动就等 CI 说话。
 - **残留**：holdout 没在 1.5.7 上跑过（CI 只跑 pytest）；下次升级 lightrag 前，本地先跑一遍 S3/S5/S7/S8。
+
+## 17. 符号型实体抽不出来（代码名/常量名建不了节点）
+
+- **状态**：候选，本阶段不做。来源：探针 B 结论 §3「边界 2」（2026-11-04）。
+- **现象**：4 份设计文档灌图（260 实体 / 371 关系）后跑 agent 场景检索，`unmatched_keywords` 里反复出现「文档里满篇、图上无节点」的词：`graphkb`、`K=5`、`HIT_MIN_RATIO`、`budget_truncated`、`分数阈值`、`连通性`、`最短路`、`编排层`。
+- **原因**：LightRAG 的自动抽取偏自然语言实体，对代码符号（包名、常量名、`K=5` 这类）几乎不建节点；而 agent 的任务描述里恰恰满是代码符号——这是 agent 记忆的特有短板，也呼应 JitKnow 分析里的「自动抽取、类型不可控」。
+- **为什么本阶段不做**：任何解法都要新增规则族（抽取前预处理 / 抽取后补节点 / 本体 schema），撞约束 6「规则预算 ≤ 1」。
+- **候选方向**：
+  1. 抽取前对代码符号做归一与保留（fenced code、`snake_case`、`CONST_NAME`、`K=5`）；
+  2. 留到本体层 schema 阶段，给符号类实体单独定型；
+  3. 只在写侧（`memory.ingest` 的 `source=session`）对代码片段做兜底节点。
+- **判据**：先量真实任务里 `unmatched_keywords` 的符号类占比，持续 >20% 再谈值不值得动。

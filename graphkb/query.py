@@ -180,6 +180,10 @@ async def _hit_trace(
     `cited` 被锚点豁免成空，paths 只剩锚点两两全排列——探针 B §4 实测（8 个锚点）
     cited=[]、paths=28（C(8,2)）。那种状态下高亮照样上色、看着“正常”，但证据位已经死了，
     属于只会骗人的假信号。
+
+    M2 约定（2026-11-04 拍板）：MCP 的 `memory.search` 把这条 ValueError 映射成
+    `degraded=true / reason="texts_equal"` 返回给调用方，与 `vdb_error` 同一种处理——
+    判据层保持硬失败，接口层负责把它翻译成可读的降级信号，不让 agent 吃到异常。
     """
     if anchor_text == evidence_text:
         raise ValueError(
