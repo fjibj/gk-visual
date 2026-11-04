@@ -377,6 +377,7 @@ async def query(
     *,
     anchor_text: str | None = None,
     evidence_text: str | None = None,
+    generate_answer: bool = True,
 ) -> QueryResult:
     """跑一次检索，返回答案 + 结构化 trace。
 
@@ -386,7 +387,11 @@ async def query(
     双文本判据（M1）：`anchor_text` 管锚点、`evidence_text` 管证据，缺省分别回落到
     `question` 与答案文本（人问场景行为不变）。Agent 场景传
     `anchor_text=context.query · evidence_text=context.task`，证据位就不再依赖 LLM 答案的措辞。
-    两者相等会抛 ValueError（见 `_hit_trace`：相等时证据层塔成空）。
+    两者相等会抛 ValueError（见 `_hit_trace`：相等时证据层塌成空）。
+
+    `generate_answer=False`（M2 的 Agent 面用）：不调 aquery，省掉一次答案生成的 LLM 调用——
+    agent 自己会答，我们只给上下文。此模式下必须显式给 `evidence_text`，否则证据层无从产生，
+    宁可报错也不返回一个看着正常、实则没有证据位的分层结果。
     """
     param = QueryParam(
         mode=mode,
@@ -407,7 +412,15 @@ async def query(
             # 上下文就是空的 → 不生成答案，绝不返回无据可查的黑盒
             return QueryResult(question=question, answer=NOT_FOUND_ANSWER, trace=trace, trace_hit=False)
         # 分层要用答案文本做判据，所以答案先出、路径后算（aquery 自带一次检索，与旧版同量）
-        answer = await rag.aquery(question, param)
+        if generate_answer:
+            answer = await rag.aquery(question, param)
+        else:
+            if evidence_text is None:
+                raise ValueError(
+                    "generate_answer=False 时必须显式给 evidence_text"
+                    "（否则证据层没有来源，分层结果不可信）"
+                )
+            answer = ""  # Agent 面：不生成答案，只给上下文
         trace = await _hit_trace(
             rag,
             anchor_text if anchor_text is not None else question,

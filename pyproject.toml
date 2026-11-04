@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 graphkb = "graphkb.cli:main"
+graphkb-mcp = "graphkb.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/fjibj/gk-visual"
@@ -36,6 +37,14 @@ Issues = "https://github.com/fjibj/gk-visual/issues"
 
 [project.optional-dependencies]
 dev = ["pytest"]
+# Agent 记忆面（MCP，stdio）。装法：pip install -e ".[dev,mcp]"
+# 版本锁的依据（2026-11-04 实测，mcp 2.3.0）：
+#   · mcp-types 的 HANDSHAKE_PROTOCOL_VERSIONS 含 "2025-11-25"（Cola 侧报的就是它）
+#   · 裸 JSON-RPC 探针实测 initialize(2025-11-25) 原样回显、未降级
+#   · 工具名合规字符集含点号（SEP-986：^[A-Za-z0-9._-]{1,128}$），memory.search 合法
+# 2.x 把 FastMCP 改名 MCPServer（mcp.server.fastmcp 已删）；3.x 若再动协议，
+# 让 mcp_server 的启动守卫与 tests/test_mcp.py 先报错，而不是等 agent 调不通才发现。
+mcp = ["mcp>=2.3.0,<3"]
 
 [tool.setuptools.packages.find]
 include = ["graphkb*"]

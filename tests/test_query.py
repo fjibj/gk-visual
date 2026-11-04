@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from graphkb.query import _build_trace, query
 
 
@@ -132,3 +134,33 @@ def test_query_dual_text_takes_evidence_from_task():
     )
     assert r.trace["hit_layers"]["anchors"] == ["张三"]
     assert set(r.trace["hit_layers"]["cited"]) == {"北京", "字节跳动"}
+
+
+# ---- M2：Agent 面不生成答案，但不许空着证据位 ----
+
+
+class _NoAnswerRag(_FakeRag):
+    """aquery 被调用即失败：用来证明 generate_answer=False 真的省掉了那次 LLM。"""
+
+    async def aquery(self, question, param):
+        raise AssertionError("generate_answer=False 时不该调 aquery")
+
+
+def test_query_skip_answer_generation_uses_given_evidence():
+    r = asyncio.run(
+        query(
+            _NoAnswerRag("（不会用到）"),
+            "张三在哪工作",
+            anchor_text="张三",
+            evidence_text="张三在北京的字节跳动上班",
+            generate_answer=False,
+        )
+    )
+    assert r.answer == ""
+    assert r.trace["hit_layers"]["anchors"] == ["张三"]
+    assert set(r.trace["hit_layers"]["cited"]) == {"北京", "字节跳动"}
+
+
+def test_query_skip_answer_generation_requires_evidence():
+    with pytest.raises(ValueError, match="evidence_text"):
+        asyncio.run(query(_NoAnswerRag("x"), "张三在哪工作", generate_answer=False))

@@ -31,6 +31,7 @@ git clone https://github.com/fjibj/gk-visual.git && cd gk-visual
 python -m venv .venv && . .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -e .                                  # 核心 + server + 文件解析依赖
 pip install -e ".[dev]"                            # 加 pytest
+pip install -e ".[dev,mcp]"                        # 再加 Agent 记忆面（MCP，stdio）
 ```
 
 依赖里写的是 `lightrag-hku[api]`：本项目 `server.py` 需要 fastapi/uvicorn，而文件解析要用的 `pypdf / python-docx / python-pptx / openpyxl` 是 LightRAG 解析层的按需依赖（缺一个少一种格式，所以四个都显式列了）。`python-multipart` 也在——FastAPI 的文件上传（`UploadFile`）没它就直接报错。
@@ -101,7 +102,7 @@ python -m graphkb.cli serve --port 8001 --reload            # 换端口 / 后端
 ## 6. 验证
 
 ```bash
-python -m pytest -q                                   # 单元测试（当前 67 passed，全程离线，LLM/embedding 走 mock）
+python -m pytest -q                                   # 单元测试（当前 92 passed，全程离线，LLM/embedding 走 mock）
 python holdout/evaluate.py slice-7-retrieval-visualization --version slice-7-v1
 python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slice-8-v1
 ```
@@ -121,6 +122,8 @@ graphkb/
   query.py       # 检索 + 命中分层（锚点 / 答案引用 / 最短路）-> trace
   render.py      # 把 trace 渲染成 CLI 可读的透明窗
   server.py      # FastAPI：/api/graph /api/query /api/documents /api/entities ... + 静态托管
+  memory_api.py  # Agent 记忆面逻辑：memory.search / ingest / ingest_status（不 import mcp，可离线测）
+  mcp_server.py  # MCP 适配器（stdio）：把 memory_api 挂成工具；日志走 stderr，stdout 只过 JSON-RPC
 frontend/
   src/main.ts    # Cytoscape 图 + 检索高亮 + 编辑面板（无框架，原生 TS）
   src/api.ts     # 后端契约类型
@@ -146,12 +149,48 @@ data/            # 库本体（gitignore）
 - **URL 抓取未做**：S8 只做了本地文件解析；网页抓取涉及 SSRF/超时/正文抽取，需单独切片。
 - **没有鉴权**：`serve` 只该绑 `127.0.0.1`，别指望它挡人。CI 只覆盖 pytest 与前端构建（`.github/workflows/ci.yml`），**不覆盖 holdout**——那要跑真模型，成本与稳定性都不适合放 CI。
 
-## 10. 下一步：Agent 记忆面（MCP）
+## 10. Agent 记忆面（MCP，已实现）
 
-本仓库下一步是把它从「人查知识库」扩成「**也能给 Agent 当记忆后端**」：加一层 MCP 外壳（`memory.search / memory.ingest / memory.ingest_status`），harness 干活时自动存、下次任务自动想起，注入有预算、过程可审计。
+同一个 core，两个面：`server.py`（HTTP，人用）与 `mcp_server.py`（stdio，Agent 用）。MCP 这面把三个工具挂出来：
 
-- 路径上的第一块砖是**判据双文本改造**：`_hit_trace(anchor_text, evidence_text)` —— 人问时 `anchor_text=问题 · evidence_text=答案`，Agent 用时 `anchor_text=context.query · evidence_text=context.task`，判据逻辑一行不改。
-- 设计输入见 [`idsd/notes/`](<idsd/notes/>) 与计划书；双探针（接口通路 / 判据在 agent 场景的实测）已完成，结论是「任务文本能顶替答案当证据位」。
+| 工具 | 用途 |
+| --- | --- |
+| `memory.search` | 检索：锚点取 `context.query`、证据取 `context.task`，回 `answer_context`（唯一建议注入的）+ `hits`/`trace`（只供审计）+ `degraded`/`reason` |
+| `memory.ingest` | 写入：默认异步，回 `job_id`（一次抽取约 28s，不能堵住 agent） |
+| `memory.ingest_status` | 查写入进度（`queued\|running\|done\|error\|unknown`） |
+
+启动（scope 在启动时绑定，工具参数里没有团队/群/域）：
+
+```bash
+pip install -e ".[mcp]"
+graphkb-mcp --workspace ws-personal          # 或 --workspace ws-team-fangjin
+```
+
+客户端配置示例（Claude Desktop / Cola 这类 stdio 客户端）：
+
+```json
+{
+  "mcpServers": {
+    "gk-visual": {
+      "command": "graphkb-mcp",
+      "args": ["--workspace", "ws-personal"]
+    }
+  }
+}
+```
+
+几条设计上的硬规定：
+
+- **`answer_context` 与 `trace` 分家**：前者预算内、可以注入 agent 上下文；后者完整、只给人看。看得见 ≠ 塞进去（防“把所有 observation 都糊进 prompt”那种死法）。
+- **预算透传**：`budget={top_k, max_hops, max_paths, max_context_tokens}` 会落到 `RetrievalConfig`；超预算**如实计数**（`budget_used.context_dropped`）并回 `reason="budget_truncated"`，不静默丢。
+- **降级必须显式**：`texts_equal` / `vdb_error` / `no_anchor` / `vector_fallback` / `budget_truncated` 任一命中 → `degraded=true` + `reason`，agent 据此降低对结果的信任。
+- **`context.query` 与 `context.task` 不要给同一段文本**：两者相等时证据层会塔成空（锚点把证据全吃掉），此时会退回人类面语义并回 `reason="texts_equal"`。
+- **不生成答案**：agent 模式下不调 LLM 写答案（省一次调用），只给上下文。
+- **`trace.evidence_empty`**：锚点有、证据一条都没有时置 `true`（`cited` 空）——分层只停半路。不当作 degraded（上下文本身可靠），但也不让它只藏在 warnings 里。
+
+依赖锁：`mcp>=2.3.0,<3`。依据是 2026-11-04 实测——`mcp-types` 的 `HANDSHAKE_PROTOCOL_VERSIONS` 含 `2025-11-25`（Cola 侧报的版本），裸 JSON-RPC 探针确认 `initialize` 原样回显、未降级，且工具名合规字符集含点号（SEP-986），`memory.search` 合法。`graphkb-mcp` 启动时会再自检一次协议支持，`tests/test_mcp.py` 也有对应断言——哪天 SDK 撤了 handshake 版协议，这里先报错，而不是等 agent 调不通才发现。
+
+已知边界：任务表在进程内存里（server 重启 `job_id` 即失效）；`origin`（溯源标签）只记录不落库，等 M4；暂无鉴权，只适合本机 stdio。
 
 ## 11. 安全注意
 

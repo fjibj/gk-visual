@@ -30,7 +30,7 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,mcp]"
       - name: 语法编译检查
         run: python -m compileall -q graphkb
       - name: 单元测试（全离线，LLM/embedding 走 mock）
