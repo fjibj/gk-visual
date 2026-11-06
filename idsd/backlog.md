@@ -183,7 +183,9 @@
   3. **按层分配预算**：anchor 占大头、cited 次之、path 只留「名字 + 类型」（它只需要证明连得上，不需要完整描述），块只在有明确引用时进。
 - **建议**：先做 ③（收益最大、且不丢信息：path 的描述本来就可以靠 `entity:` 取回），再叠 ①。
 - **落地（方案 ③）**：`graphkb/memory_api.py` 新增 `LAYER_SHARES`（anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%），path 层只带名字 + 类型；份额是**软上限**（后面几层花不完的额度当前层可以先吃，否则「预算恰好够用」会被错杀），用不完的往下传（waterfall），每层花费记进 `budget_used.context_by_layer`。同图同 800 token 的实测：1 锚 + 2 引用从「inline 13 / spill 3 块 1146」变成「inline 14 / spill 2 块 764」；3 锚场景从「inline 12 / spill 12」变成「inline 17 / spill 7」；demo 真图 H1 从 inline 9 条变 34 条。细节见 `idsd/notes/m3-inline-spill.md` §7。
-- **残留**：`degraded` 在真图上仍是常态（块装不下就是 `budget_truncated`）——溢出不是丢弃，但默认 800 token 对 260 实体这种图偏紧；要不要调大默认值或按图规模自适应，另议（方案 ①/② 也还没做）。
+- **残留（原）**：`degraded` 在真图上仍是常态（块装不下就是 `budget_truncated`）——溢出不是丢弃，但默认 800 token 对 260 实体这种图偏紧。
+- **后续处置（2026-11-07，按图规模自适应）**：`graphkb/memory_api.py` 新增 `ADAPTIVE_CONTEXT_STEPS`（≤100 实体 → 800 / ≤400 → 1200 / ≤1000 → 1600 / 其余 2000 上限）与 `adaptive_context_tokens()`；`budget_used` 同时报 `graph_nodes` 与 `context_tokens_source`（`adaptive` / `explicit`），显式传参则完全不生效（调用方要可复现）。真图 260 实体同一句 H1：800 → 1200 后 inline 从 34 条 / 734 token 变 **38 条 / 1158**，溢出从 16 块 / 2936 降到 **12 块 / 2512**。真图回归新增三条回放用例（分层省 token、块能挤进注入且溢出的能取回、自适应档位与 `context_tokens_source`）与一条 slow 现场用例（两副本隔离）。细节见 `idsd/notes/m3-inline-spill.md` §8/§9。
+- **残留（现）**：方案 ①（拼接句去重）/ ②（分段截断）未做；真图上 `degraded` 仍会出现，因为单条实体描述本身就长（最长 384 token），而注入不能把预算一个人吃光。
 
 ## 19. 同进程里两个实例同 workspace：KV 静默为空
 
@@ -192,4 +194,5 @@
 - **根因**：LightRAG 的 KV 数据挂在**进程级**共享字典 `_shared_dicts[workspace:namespace]` 上，而「谁负责从磁盘加载」只是全局初始化标志 `_init_flags`。A 先把 `:text_chunks` 标成已初始化并填进去，B 看到标志就不再读自己的 JSON 文件。GraphML 是每个实例自己读文件，所以图不受影响。
 - **改法**：`graphkb/rag.py::_isolate_shared_kv`，在 `init_rag` 里跑。判定不看「谁先谁后」而看**内容**：把我的磁盘文件读出来，若共享字典里缺我文件中的键（`set(mine) - set(data)` 非空），说明那份共享数据不属于我，把 `_data` 换成本实例自己的字典——读自己的文件、写也只落自己的目录；若共享字典已包含我全部键（同库重复建实例），什么都不动，保持上游共享语义。真图 live 用例已改回 `workspace=""`，靠它自动隔离跑通（日志：`8 个 KV 存储改用本实例自己的数据副本`）。
 - **代价/边界**：被隔离的实例不再与其它实例共享内存（本来也指向不同目录，共享才是错的）；多进程 `initialize_share_data` 那套协议不参与（graphkb 目前单进程）。
+- **回归（2026-11-07）**：`tests/test_real_graph.py::test_live_two_workspaces_are_isolated` 开两个真库副本（`workspace=""`），故意在第二个副本的块存储里多塞一块：断言 A 看不见它、B 看得见、两边的溯源都能解开块、且两边 `text_chunks._data` 不是同一个对象。只断言「两边都读得到块」是测不出串台的——两个副本内容本来就一样。
 - **还剩下的**：这是 graphkb 层的补丁，不是上游修复。可以向上游提 issue：多实例同 workspace 是合理用法，应该由 `need_init` 比对库目录而不是只看 namespace。

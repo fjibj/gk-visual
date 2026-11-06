@@ -783,6 +783,61 @@ def test_m4_search_and_expand_carry_provenance():
     assert out["items"][0]["provenance"]["docs"]
 
 
+def test_layer_budget_saves_path_tokens_on_real_graph():
+    """同样的预算，path 层每条只花名字 + 类型的钱，锚点/引用点才占描述的钱。"""
+    graph, base = _replay("h1_plan")
+    a, b, c = _pick_three(base, graph)
+    rag = _ReplayRag(_case("h1_plan"), graph, _chunks())
+
+    res = _search(rag, query_text=a, task=f"帮我核对 {b} 和 {c} 的接口说明")
+    by_layer = res["trace"]["budget_used"]["context_by_layer"]
+    path, anchor = by_layer["path"], by_layer["anchor"]
+    assert path["inline"] and anchor["inline"]
+    assert path["tokens"] / path["inline"] < 25, f"path 每条不应当带描述：{by_layer}"
+    assert anchor["tokens"] / anchor["inline"] >= 30, f"锚点应当带描述：{by_layer}"
+
+    for line in res["answer_context"].splitlines():
+        if line.startswith("[path]") and " -> " not in line:  # 只查实体行，关系行本来就没类型
+            assert "（" in line and "：" not in line, f"path 行应当只有名字 + 类型：{line}"
+
+
+def test_layer_budget_admits_chunks_on_real_graph():
+    """path 层省下来的额度真能让块挤进来，而且没挤进来的还能取回。"""
+    graph, base = _replay("h1_plan")
+    a, b, c = _pick_three(base, graph)
+    rag = _ReplayRag(_case("h1_plan"), graph, _chunks())
+    tools = _tools(rag)
+
+    res = asyncio.run(tools.search({"query": a, "task": f"帮我核对 {b} 和 {c} 的接口说明"}))
+    by_layer = res["trace"]["budget_used"]["context_by_layer"]
+    assert by_layer["chunk"]["inline"] >= 1, f"分层之后块应当挤得进来一条：{by_layer}"
+    chunk_lines = [ln for ln in res["answer_context"].splitlines() if ln.startswith("[chunk]")]
+    assert chunk_lines
+
+    spilled_chunks = [r["ref"] for r in res["spill_refs"] if r["kind"] == "chunk"]
+    if spilled_chunks:
+        out = asyncio.run(tools.expand(spilled_chunks))
+        assert out["missing"] == [] and len(out["items"]) == len(spilled_chunks)
+
+
+def test_adaptive_budget_reports_its_basis_on_real_graph():
+    """真图夹具 80 实体 → 落在最小档（800），并老实报出“这个数是怎么来的”。"""
+    graph, base = _replay("h1_plan")
+    a, b, c = _pick_three(base, graph)
+    rag = _ReplayRag(_case("h1_plan"), graph, _chunks())
+
+    res = _search(rag, query_text=a, task=f"帮我核对 {b} 和 {c}")
+    used = res["trace"]["budget_used"]
+    assert used["graph_nodes"] == graph.number_of_nodes()
+    assert used["context_tokens_source"] == "adaptive"
+    assert used["context_tokens"] == DEFAULT_MAX_CONTEXT_TOKENS
+
+    tight = _search(rag, query_text=a, task=f"帮我核对 {b} 和 {c}", budget={"max_context_tokens": 150})
+    used_tight = tight["trace"]["budget_used"]
+    assert used_tight["context_tokens"] == 150
+    assert used_tight["context_tokens_source"] == "explicit"
+
+
 # ================================================================ M5 触发器
 
 
@@ -974,3 +1029,92 @@ def test_live_real_workspace_end_to_end(tmp_path):
     origins = {p.origin for p in out["provs"]}
     assert origins == {"extracted"}, f"真库全是从文档抽的，出现 {origins} 说明判定错了"
     assert sum(p.unresolved for p in out["provs"]) == 0
+
+    # 自适应预算：260 实体落在中档（不该再是 800）
+    used = search["trace"]["budget_used"]
+    assert used["graph_nodes"] >= 200
+    assert used["context_tokens_source"] == "explicit", "这里显式给了 200，案例测的是另一件事"
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not (REAL_WORKSPACE / GRAPH_FILE).is_file() or not _ollama_up(),
+    reason="现场组需要真实 workspace 与本地 Ollama（CI 里没有，自动跳过）",
+)
+def test_live_two_workspaces_are_isolated(tmp_path):
+    """同进程开两个真库副本（workspace 都是 ""）：各读各的块，谁也别串。
+
+    不隔离的话第二个实例的 `text_chunks` 会指着先到者的数据（进程级共享字典 + 全局初始化标志），
+    现象是「图读得到、块全 missing」。所以这里给 B 多塞一块合成的块：
+    A 不许看见它、B 必须看得见——只看「两边都能读出块」是测不出串台的（两个副本内容本来就一样）。
+    """
+    from dotenv import load_dotenv
+
+    from graphkb.config import load_config
+    from graphkb.provenance import annotate
+    from graphkb.rag import init_rag
+
+    load_dotenv()
+    ws_a = tmp_path / "a"
+    ws_b = tmp_path / "b"
+    shutil.copytree(REAL_WORKSPACE, ws_a)
+    shutil.copytree(REAL_WORKSPACE, ws_b)
+
+    # 只往 B 的块存储里加一条：用来区分“读到了自己的”和“读到了共享字典里的”
+    chunks_file = ws_b / "kv_store_text_chunks.json"
+    rows = json.loads(chunks_file.read_text(encoding="utf-8"))
+    rows["synthetic-only-in-b"] = {
+        "tokens": 3,
+        "content": "只存在于 B 的合成块",
+        "chunk_order_index": 99,
+        "full_doc_id": "doc-synthetic",
+        "file_path": "synthetic.md",
+    }
+    chunks_file.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+
+    def _cfg(path: Path):
+        cfg = load_config()
+        cfg.working_dir = str(path)
+        cfg.workspace = ""  # 故意不隔离 namespace：就是要让 rag._isolate_shared_kv 干活
+        return cfg
+
+    async def scenario() -> dict:
+        rag_a = await init_rag(_cfg(ws_a))
+        rag_b = await init_rag(_cfg(ws_b))
+        try:
+            names = [
+                str(n.get("entity_id") or n.get("id"))
+                for n in await rag_a.chunk_entity_relation_graph.get_all_nodes()
+            ]
+            node = await rag_b.chunk_entity_relation_graph.get_node(sorted(names)[0])
+            refs = [
+                r
+                for r in str(node.get("source_id") or "").split("<SEP>")
+                if r and r != "manual_creation"
+            ][:2]
+            out = {
+                "names": len(names),
+                "own_a": await rag_a.text_chunks.get_by_ids(refs),
+                "own_b": await rag_b.text_chunks.get_by_ids(refs),
+                "synth_a": (await rag_a.text_chunks.get_by_id("synthetic-only-in-b")),
+                "synth_b": (await rag_b.text_chunks.get_by_id("synthetic-only-in-b")),
+                "prov_a": (await annotate(rag_a, [node]))[0],
+                "prov_b": (await annotate(rag_b, [node]))[0],
+                "shared": rag_a.text_chunks._data is rag_b.text_chunks._data,
+            }
+            return out
+        finally:
+            await rag_a.finalize_storages()
+            await rag_b.finalize_storages()
+
+    out = asyncio.run(scenario())
+    assert out["names"] >= 200
+    assert out["own_a"] and all(out["own_a"]), "实例 A 读不到真库的块"
+    assert out["own_b"] and all(out["own_b"]), "实例 B 读不到真库的块"
+    assert out["synth_a"] is None, "A 看见了 B 的块——KV 又串了"
+    assert out["synth_b"] is not None and out["synth_b"]["content"] == "只存在于 B 的合成块"
+    for tag in ("prov_a", "prov_b"):
+        prov = out[tag]
+        assert prov.origin == "extracted"
+        assert prov.chunks >= 1 and prov.unresolved == 0, f"{tag} 的溯源解不开块"
+    assert out["shared"] is False, "两个不同目录（内容也不同）的库不许共用一个内存字典"

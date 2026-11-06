@@ -215,9 +215,9 @@ token 估算因此仍然可复算。要留原始副本用 `--raw`，但别提交
 
 - `tests/test_documents.py` 6 → 5 passed（删掉恒真的旧用例，加 `test_concurrent_upserts_do_not_interleave`）。
 - `tests/test_render.py` 新增 `test_hit_trace_path_node_attrs_come_from_graph`（真图那个裸名字缺陷的回归）。
-- `tests/test_real_graph.py`：13 条链路回放 + **21 条 M1–M5 逐层回放** + 1 条现场用例。
+- `tests/test_real_graph.py`：13 条链路回放 + **21 条 M1–M5 逐层回放** + 1 条现场用例；2026-11-07 又加了 3 条分层/自适应回放 + 1 条现场隔离用例（见 §12）。
 - `tests/test_rag_guard.py` 新增 3 条（同 workspace 冲突要 warning）。
-- 全量：**190 passed**（含现场用例，本机真库 260 实体 + Ollama）；CI 里现场用例 skip，报 189 passed / 1 skipped。
+- 全量：**196 passed**（含 2 条现场用例，本机真库 260 实体 + Ollama）；CI 里现场用例 skip（`-m "not slow"` 本地为 194 passed / 2 deselected）。
 
 ## 10. 真图跑 M1–M5 发现的两件事（2026-11-06）
 
@@ -268,3 +268,29 @@ anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%；path 层只带名字
 代价：被隔离的实例不再与其它实例共享内存（本来指向不同目录，共享才是错的）；
 多进程 `initialize_share_data` 那套协议没参与（graphkb 目前单进程）。这仍是 graphkb 层的补丁，
 上游该把「库目录」也纳入初始化判定——留给报 issue。
+
+## 12. 预算按图规模自适应（2026-11-07）
+
+§11 的 ① 把预算按**层**分了，但总额还是写死的 800——而 800 是按小图（≤100 实体）定的数。
+真图 260 实体上它偏紧：块仍然装不下，`degraded=budget_truncated` 成了常态。直接调默认值又会坑到小图
+（17 实体的图上 1200 的预算一半用不完）。所以按图的规模取档：
+
+| 图上实体数 | `max_context_tokens` |
+| --- | --- |
+| ≤ 100 | 800 |
+| ≤ 400 | 1200 |
+| ≤ 1000 | 1600 |
+| > 1000 | 2000（封顶） |
+
+三条规矩：**只用不降**（图长大不能让同一句装得更少）、**显式优先**（传了 `max_context_tokens`
+就完全不看自适应，调用方要可复现）、**数字要能解释**（`budget_used` 同时报 `graph_nodes`
+与 `context_tokens_source=adaptive|explicit`）。
+
+真图 260 实体、同一句 H1 起手查：800 → 1200 后 inline 34 条 / 734 token → **38 条 / 1158**，
+溢出 16 块 / 2936 → **12 块 / 2512**。增量不算戏剧化，但腾出来的额度基本都给了块（原文才是
+「无据可查」的那一半）；锚点层吃满自己的 40%（4 条 451 token，cap 480）——真实体描述本来就长。
+
+真图回归新增：分层省 token（path 每条花的钱远少于锚点）、块能挤进注入且溢出的能取回、
+自适应档位与 `context_tokens_source`（80 实体 → 800 / 显式 150 → `explicit`），
+以及一条 slow 现场用例——两个真库副本同进程、`workspace=""`，故意给 B 多塞一块：
+A 不许看见、B 必须看见、两边溯源都解不开块就说明又串了。

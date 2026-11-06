@@ -103,7 +103,7 @@ python -m graphkb.cli trigger plan "帮我整理张三的入职材料"    # 抬�
 ## 6. 验证
 
 ```bash
-python -m pytest -q                                   # 单元 + 真图回归（当前 190 passed，全程离线，LLM/embedding 走 mock）
+python -m pytest -q                                   # 单元 + 真图回归（当前 196 passed，全程离线，LLM/embedding 走 mock）
 python -m pytest -q -m "not slow"                      # 跳过需要真库 + Ollama 的现场用例（CI 里自动 skip）
 python holdout/evaluate.py slice-7-retrieval-visualization --version slice-7-v1
 python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slice-8-v1
@@ -116,7 +116,8 @@ python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slic
 `graphml` + `aquery_data` / `entities_vdb` 的原样返回 + `text_chunks`（图上 `source_id` 引用的那几块原文）。
 默认**脱敏**——只保留结构（节点数、度数、`<SEP>` 分段与长度、带点号的方法名），文字换成等长填充，因为仓库是公开的。
 只想补块、不想重跑检索引擎时加 `--chunks-only`（纯读，零 LLM）。
-另外一条 `slow` 用例会在本地自动拷一份真库跑 H1 / 离题 H3 / H0 + `search`→`expand` + 全图溯源，**不用手动搬数据**；CI 里没那张图，自动 skip。
+另外两条 `slow` 用例会在本地自动拷真库：一条跑 H1 / 离题 H3 / H0 + `search`→`expand` + 全图溯源，
+另一条开两个副本验同进程隔离，**不用手动搬数据**；CI 里没那张图，自动 skip。
 
 holdout 是 IDSD 的「考卷区」：场景由 `expectations.md` 派生、不回看实现，构建期对代理不可见（见 `holdout/README.md` 与 `.claudeignore`）。判卷结果存档在 `holdout/results/<版本>/report.json`。
 
@@ -134,7 +135,7 @@ graphkb/
   query.py       # 检索 + 命中分层（锚点 / 答案引用 / 最短路）-> trace
   render.py      # 把 trace 渲染成 CLI 可读的透明窗
   server.py      # FastAPI：/api/graph /api/query /api/documents /api/entities ... + 静态托管
-  memory_api.py  # Agent 记忆面逻辑：search / expand / ingest / ingest_status + Inline&Spill + 按层分配预算（不 import mcp，可离线测）
+  memory_api.py  # Agent 记忆面逻辑：search / expand / ingest / ingest_status + Inline&Spill + 按层分配预算 + 按图规模自适应（不 import mcp，可离线测）
   mcp_server.py  # MCP 适配器（stdio）：把 memory_api 挂成工具；日志走 stderr，stdout 只过 JSON-RPC
   triggers.py    # M5 触发器：三钩子 + H0 兜底 + 会话总闸 + 实体探针（不 import mcp，可离线测）
 frontend/
@@ -164,7 +165,9 @@ data/            # 库本体（gitignore）
 - **URL 抓取未做**：S8 只做了本地文件解析；网页抓取涉及 SSRF/超时/正文抽取，需单独切片。
 - **没有鉴权**：`serve` 只该绑 `127.0.0.1`，别指望它挡人。CI 只覆盖 pytest 与前端构建（`.github/workflows/ci.yml`），**不覆盖 holdout**——那要跑真模型，成本与稳定性都不适合放 CI。
 - **同进程多个库已自动隔离**：LightRAG 的 KV 存储挂在进程级共享字典（`_shared_dicts[workspace:namespace]`）上，"谁负责从磁盘加载"只是个全局标志。后果是第二个实例的 `text_chunks` / `full_docs` 会静静地为空（图还能读，因为 GraphML 是每实例自己读文件）。`graphkb/rag.py::_isolate_shared_kv` 在初始化后按**内容**判定：我的文件里有、共享字典里没有 → 把这个存储换成本实例自己的副本（读自己的文件、写也只落自己的目录）；同库重复建实例则保持上游共享。彻底避开还是给每个库不同 `GKB_WORKSPACE`。
-- **注入预算在真图上是瓶颈（已缓解，未消失）**：260 实体的真图上，一段话的命中往往就有 10~13 行注入，其中过半是 `[path]` 中间节点。现在按层分预算（anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%，path 只带名字 + 类型，份额是软上限）：同样 800 token，装进去的条目从 9 条变成 34 条，溢出从 41 条 / 4380 token 降到 16 条 / 2936。块基本仍装不下，所以 `reason=budget_truncated` 在真图上是常态——那是溢出不是丢弃（引用都在 `spill_refs`），但 `degraded` 在真图上别当异常告警读。细节：[`idsd/notes/m3-inline-spill.md`](<idsd/notes/m3-inline-spill.md>) §7。
+- **注入预算在真图上是瓶颈（已缓解，未消失）**：260 实体的真图上，一段话的命中往往就有 10~13 行注入，其中过半是 `[path]` 中间节点。现在按层分预算（anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%，path 只带名字 + 类型，份额是软上限）：同样 800 token，装进去的条目从 9 条变成 34 条，溢出从 41 条 / 4380 token 降到 16 条 / 2936。
+预算还会按图规模取档（≤100 实体 800 / ≤400 → 1200 / ≤1000 → 1600 / 其余 2000 封顶），显式传 `budget.max_context_tokens` 则完全不生效；到底用了哪档由 `budget_used.context_tokens_source` 交代（`adaptive` / `explicit`）。真图 260 实体上从 800 提到 1200 后，inline 从 34 条 / 734 token 变成 38 条 / 1158，溢出从 16 块降到 12 块。
+块仍不是全能装下，所以 `reason=budget_truncated` 在真图上是常态——那是溢出不是丢弃（引用都在 `spill_refs`），但 `degraded` 在真图上别当异常告警读。细节：[`idsd/notes/m3-inline-spill.md`](<idsd/notes/m3-inline-spill.md>) §7/§8。
 
 ## 10. Agent 记忆面（MCP，已实现）
 
@@ -201,7 +204,7 @@ graphkb-mcp --workspace ws-personal          # 或 --workspace ws-team-fangjin
 - **Inline & Spill**：预算内进 `answer_context`；装不下的**不丢**，变成 `spill_refs`（`{ref, kind, summary, tokens}`，摘要不占注入预算），需要时 `memory.expand` 取回。引用是**无状态的**（直接指向图与块存储），所以 server 重启、换会话都能取——代价是库里删了就取不到，此时如实报 `missing` 而不编。
 - **块只在与命中实体有来源交集时进注入**：向量召回的块（`top_k`）不等于命中，与锚点/证据点毫无来源交集的块塞进上下文就是拿预算买噪声。被挡下的仍在 `hits.chunks`（标 `linked=false`），warnings 里说清几块；`memory.expand` 仍可按 `chunk:<id>` 取回。
 - **溯源跟着内容走**：`hits` 里每个实体/关系、`expand` 取回的每一条都带 `origin`（`extracted`/`manual`/`mixed`/`unknown`）与 `provenance{docs,chunks,unresolved}`——agent 能分清“从文档里读到的”和“人手工断言的”，这是置信度的地基。读图挂了就回 `unknown`，不假称有来源。
-- **预算透传**：`budget={top_k, max_hops, max_paths, max_context_tokens}` 会落到 `RetrievalConfig`；`trace.budget_used` 回 `context_used / context_inline / context_spilled / spilled_tokens`，溢出时 `reason="budget_truncated"`，不静默丢。
+- **预算透传**：`budget={top_k, max_hops, max_paths, max_context_tokens}` 会落到 `RetrievalConfig`；`trace.budget_used` 回 `context_used / context_inline / context_spilled / spilled_tokens / context_by_layer / graph_nodes / context_tokens_source`，溢出时 `reason="budget_truncated"`，不静默丢。不给 `max_context_tokens` 时按图规模取档（见 §9），并在 `context_tokens_source` 里说是 `adaptive` 还是 `explicit`。
 - **降级必须显式**：`texts_equal` / `vdb_error` / `no_anchor` / `vector_fallback` / `budget_truncated` 任一命中 → `degraded=true` + `reason`，agent 据此降低对结果的信任。
 - **`context.query` 与 `context.task` 不要给同一段文本**：两者相等时证据层会塔成空（锚点把证据全吃掉），此时会退回人类面语义并回 `reason="texts_equal"`。
 - **不生成答案**：agent 模式下不调 LLM 写答案（省一次调用），只给上下文。

@@ -13,7 +13,15 @@ from types import SimpleNamespace
 import pytest
 
 from graphkb.config import Config
-from graphkb.memory_api import MemoryTools, build_answer_context, estimate_tokens, resolve_budget
+from graphkb.memory_api import (
+    DEFAULT_MAX_CONTEXT_TOKENS,
+    MAX_ADAPTIVE_CONTEXT_TOKENS,
+    MemoryTools,
+    adaptive_context_tokens,
+    build_answer_context,
+    estimate_tokens,
+    resolve_budget,
+)
 
 # ---------------------------------------------------------------- 假对象
 
@@ -100,11 +108,11 @@ class _FakeDocStatus:
 class _FakeRag:
     """检索 + 写入两用假图。`aquery` 默认直接失败——Agent 模式本就不该生成答案。"""
 
-    def __init__(self, answer: str = "张三在字节跳动工作。", scores=None, vdb_boom=False):
+    def __init__(self, answer: str = "张三在字节跳动工作。", scores=None, vdb_boom=False, nodes=None):
         self._answer = answer
         self.docs: dict = {}
         self.calls: list = []
-        self.chunk_entity_relation_graph = _FakeGraph()
+        self.chunk_entity_relation_graph = _FakeGraph(nodes=nodes)
         self.entities_vdb = _FakeVdb(scores=scores, boom=vdb_boom)
         self.doc_status = _FakeDocStatus(self.docs)
         self.text_chunks = _FakeTextChunks()
@@ -393,6 +401,47 @@ def test_resolve_budget_defaults_come_from_config():
     assert b.retrieval.hit_top_k == 5
     assert b.max_context_tokens == 800
     assert b.as_dict()["context_tokens"] == 800
+
+
+def test_adaptive_context_tokens_by_graph_size():
+    """按图规模自适应：档位单调不降、有上限、不知道图多大就回固定默认值。"""
+    assert adaptive_context_tokens(0) == DEFAULT_MAX_CONTEXT_TOKENS  # 数不出来
+    assert adaptive_context_tokens(17) == DEFAULT_MAX_CONTEXT_TOKENS  # 小图不动
+    assert adaptive_context_tokens(100) == DEFAULT_MAX_CONTEXT_TOKENS  # 档位上限含在内
+    assert adaptive_context_tokens(101) > DEFAULT_MAX_CONTEXT_TOKENS
+    assert adaptive_context_tokens(400) == 1200
+    assert adaptive_context_tokens(401) == 1600
+    assert adaptive_context_tokens(1000) == 1600
+    assert adaptive_context_tokens(5000) == MAX_ADAPTIVE_CONTEXT_TOKENS
+
+    sizes = list(range(0, 3000, 7))
+    tokens = [adaptive_context_tokens(n) for n in sizes]
+    assert tokens == sorted(tokens), "规模变大，预算不许变小"
+    assert max(tokens) == MAX_ADAPTIVE_CONTEXT_TOKENS
+
+
+def test_search_default_budget_follows_graph_size():
+    """不传 budget 时：预算跟图规模走；显式传了听调用方的（两边都要在文档里看得出来）。"""
+    small, _ = _tools()
+    big, _rag = _tools(
+        nodes=[
+            {"entity_id": f"实体{i}", "entity_type": "t", "description": "d", "source_id": "chunk-1"}
+            for i in range(300)
+        ]
+    )
+    args = {"query": "张三在哪工作", "task": "张三在字节跳动上班"}
+
+    out_small = asyncio.run(small.search(args))
+    out_big = asyncio.run(big.search(args))
+    assert out_small["trace"]["budget_used"]["context_tokens"] == DEFAULT_MAX_CONTEXT_TOKENS
+    assert out_small["trace"]["budget_used"]["context_tokens_source"] == "adaptive"
+    assert out_small["trace"]["budget_used"]["graph_nodes"] == 3
+    assert out_big["trace"]["budget_used"]["context_tokens"] == 1200
+    assert out_big["trace"]["budget_used"]["graph_nodes"] == 300
+
+    out_explicit = asyncio.run(big.search(args, budget={"max_context_tokens": 300}))
+    assert out_explicit["trace"]["budget_used"]["context_tokens"] == 300
+    assert out_explicit["trace"]["budget_used"]["context_tokens_source"] == "explicit"
 
 
 # ---------------------------------------------------------------- M3：Inline & Spill

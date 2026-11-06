@@ -75,7 +75,7 @@ expand  → 7 条全部取回，第 8 条（entity:根本不存在的人）如�
 
 `tests/test_mcp.py` 覆盖：预算边界（恰好装下 / 少 1 token）、spill 引用形状与字段、`search → expand` 取回闭环、实体/关系/块三类引用、缺失引用（4 种失败原因）、输入校验（空 / 超 20 条 / 非法 max_tokens）、截断标记、`<SEP>` 抖平。
 
-pytest：104 passed（全离线）。
+pytest：104 passed（全离线）。真图回归（`tests/test_real_graph.py`）另有分层与自适应的回放用例，见 §9。
 
 ## 7. 按层分配预算（2026-11-06 真图实测后补的）
 
@@ -108,6 +108,50 @@ pytest：104 passed（全离线）。
 | demo 真图 H1 起手查 | inline 9 条 / 797，spill 41 / 4380 | inline **34** 条 / 734，spill **16** / 2936 |
 
 一句话：同样 800 token，装进去的条目多了将近四倍，路径层从「吃掉大半额度」变成「只占一两成」。
+
+## 8. 按图规模自适应（2026-11-07）
+
+800 这个默认值是按**小图**定的（≤100 实体时绰绰有余）。真图 260 实体上它偏紧：分层之后
+`degraded=budget_truncated` 仍然是常态。但直接把默认值调到 1200 会坑到小图——17 实体的话
+注入会空一大半。所以预算改成按**图的规模**取档：
+
+| 图上实体数 | `max_context_tokens` |
+| --- | --- |
+| ≤ 100 | 800（`DEFAULT_MAX_CONTEXT_TOKENS`） |
+| ≤ 400 | 1200 |
+| ≤ 1000 | 1600 |
+| > 1000 | 2000（`MAX_ADAPTIVE_CONTEXT_TOKENS`） |
+
+三条规矩：
+
+- **档位单调不降**：实体变多，预算只能变大不能变小，否则同一句话在图长大之后反而装得更少。
+- **显式给了就听显式的**：`budget.max_context_tokens` 一旦传值，自适应完全不生效——
+  调用方（agent / 测试）要的是可复现，不该被图的规模悄悄改掉。
+- **数字要能解释**：`budget_used` 里同时给 `graph_nodes` 和 `context_tokens_source`
+  （`"adaptive"` / `"explicit"`）。「为什么这次预算是 1200」必须和「为什么这次命中是这几个」一样能查。
+
+实测（真图 260 实体，同样一句 H1 起手查）：
+
+| 预算 | 注入 | 溢出 |
+| --- | --- | --- |
+| 800（旧默认） | inline 34 条 / 734 token | 16 块 / 2936 |
+| **1200（自适应档）** | inline **38** 条 / 1158 token | **12** 块 / **2512** |
+
+增量不算戏剧化，但方向对：腾出来的额度基本都给了块（原文才是「无据可查」的那一半）。
+锚点层吃满了自己的 40%（4 条 451 token，cap 480）——真实体描述本来就长，这是它该拿的。
+
+代码：`ADAPTIVE_CONTEXT_STEPS` / `MAX_ADAPTIVE_CONTEXT_TOKENS` / `adaptive_context_tokens()`；
+`MemoryTools.graph_nodes()` 缓存节点计数，写库成功后失效重算。
+
+## 9. 回归用例（真图）
+
+| 用例 | 盯住什么 |
+| --- | --- |
+| `test_layer_budget_saves_path_tokens_on_real_graph` | path 层每条花的钱明显少于锚点层，且实体行只有「名字 + 类型」、不带描述 |
+| `test_layer_budget_admits_chunks_on_real_graph` | 分层省下的额度真让块挤进来；没挤进来的块还能用 `memory.expand` 取回 |
+| `test_adaptive_budget_reports_its_basis_on_real_graph` | 80 实体落在 800 档、`context_tokens_source=adaptive`；显式给 150 时立刻改口 `explicit` |
+| `test_live_two_workspaces_are_isolated`（slow） | 同进程两个真库副本：A 看不见 B 独有的块、B 看得见，且两边溯源都能解开块 |
+
 
 `degraded` 在真图上仍然是常态（块装不下就是 `budget_truncated`）——这是溢出不是丢弃，
 但也说明默认 800 token 对 260 实体这种图偏紧，调大到多少算合适另有待定（见 backlog 18 的后续）。

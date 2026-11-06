@@ -41,7 +41,32 @@ logger = logging.getLogger(__name__)
 API_VERSION = "1"
 
 DEFAULT_MAX_CONTEXT_TOKENS = 800
-"""answer_context 的默认预算（token）。断崖式调大之前先看 Inline&Spill 的溢出清单。"""
+"""`answer_context` 的默认预算（token），按**小图**定的（≤100 个实体）。
+
+大图用 `adaptive_context_tokens()` 往上调：固定 800 对 17 实体的小图刚好，但 260 实体的真图上
+一次命中就有 30~40 条内容、块永远挤不进来（实测见 `idsd/notes/m3-inline-spill.md`）。
+"""
+
+# 按图规模自适应的档位（实体数上限, 预算）。
+# 这三个数不是调优旋钮，是「这张图一次说得出来多少」的量级估计：
+# 命中量主要随 top_k 与路径长度长，而不是随图规模线性长，所以档位取得粗、 десяти倍一跳。
+# 上限 2000 是硬道理：注入是给 harness 的上下文，不能一个人把预算吃光。
+ADAPTIVE_CONTEXT_STEPS: tuple[tuple[int, int], ...] = (
+    (100, DEFAULT_MAX_CONTEXT_TOKENS),
+    (400, 1200),
+    (1000, 1600),
+)
+MAX_ADAPTIVE_CONTEXT_TOKENS = 2000
+
+
+def adaptive_context_tokens(graph_nodes: int, base: int = DEFAULT_MAX_CONTEXT_TOKENS) -> int:
+    """按图里的实体数给默认注入预算（`graph_nodes <= 0` = 不知道，退回固定默认值）。"""
+    if graph_nodes <= 0:
+        return base
+    for limit, tokens in ADAPTIVE_CONTEXT_STEPS:
+        if graph_nodes <= limit:
+            return max(base, tokens)
+    return max(base, MAX_ADAPTIVE_CONTEXT_TOKENS)
 
 DESC_CLIP = 240  # 实体/关系描述进上下文时最多保留多少字（全文靠 spill_ref 取回）
 CHUNK_CLIP = 400  # 块内容进上下文时最多保留多少字
@@ -101,8 +126,16 @@ class Budget:
         }
 
 
-def resolve_budget(raw: dict | None, default: RetrievalConfig) -> Budget:
-    """`budget` 入参 → 检索预算。负值/零值一律报错：预算是上限，不允许悄悄变成 0。"""
+def resolve_budget(
+    raw: dict | None,
+    default: RetrievalConfig,
+    default_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+) -> Budget:
+    """`budget` 入参 → 检索预算。负值/零值一律报错：预算是上限，不允许悄悄变成 0。
+
+    `default_context_tokens` 由调用方给（`MemoryTools.search` ���它传按图规模自适应的值）；
+    显式传了 `budget.max_context_tokens` 就听调用方的。
+    """
     raw = raw or {}
     if not isinstance(raw, dict):
         raise ValueError("budget 必须是对象")
@@ -111,7 +144,7 @@ def resolve_budget(raw: dict | None, default: RetrievalConfig) -> Budget:
         max_hops=_int(raw.get("max_hops"), default.max_hops),
         max_paths=_int(raw.get("max_paths"), default.max_paths),
     )
-    max_ctx = _int(raw.get("max_context_tokens"), DEFAULT_MAX_CONTEXT_TOKENS)
+    max_ctx = _int(raw.get("max_context_tokens"), default_context_tokens)
     for name, value in (
         ("top_k", rc.hit_top_k),
         ("max_hops", rc.max_hops),
@@ -411,6 +444,20 @@ class MemoryTools:
         self.rag = rag
         self._jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task] = set()
+        self._graph_nodes: int | None = None  # 图规模缓存（自适应预算用），写侧完成后失效
+
+    # ---- 预算 ----
+
+    async def graph_nodes(self) -> int:
+        """图里有多少个实体（缓存；读不到就回 0，退回固定默认预算）。"""
+        if self._graph_nodes is None:
+            try:
+                nodes = await self.rag.chunk_entity_relation_graph.get_all_nodes()
+                self._graph_nodes = len(nodes or [])
+            except Exception as exc:  # noqa: BLE001 — 数不出来不该让检索挂掉
+                logger.warning("读图规模失败（%s: %s），本次用固定默认预算", type(exc).__name__, exc)
+                self._graph_nodes = 0
+        return self._graph_nodes
 
     # ---- memory.search ----
 
@@ -435,7 +482,10 @@ class MemoryTools:
             )
         query_text = str(context.get("query") or "").strip()
         anchor_text = query_text or task
-        b = resolve_budget(budget, self.cfg.retrieval)
+        nodes = await self.graph_nodes()
+        adaptive = adaptive_context_tokens(nodes)
+        explicit = isinstance(budget, dict) and budget.get("max_context_tokens") not in (None, "")
+        b = resolve_budget(budget, self.cfg.retrieval, adaptive)
 
         if mode == "auto":
             mode = "agent" if anchor_text != task else "human"
@@ -587,6 +637,9 @@ class MemoryTools:
                 "budget_used": {
                     **b.as_dict(),
                     **bundle.budget_trace(),
+                    # 自适应预算得看得见依据：图多大、这次预算从哪来的
+                    "graph_nodes": nodes,
+                    "context_tokens_source": "explicit" if explicit else "adaptive",
                 },
                 "retrieved": trace.get("retrieved"),
             },
@@ -769,6 +822,7 @@ class MemoryTools:
                 "entity_count": result.entity_count,
                 "relation_count": result.relation_count,
             }
+            self._graph_nodes = None  # 图变了，自适应预算的档位得重算
             job.status = "done"
             job.progress = "完成"
         except Exception as exc:  # noqa: BLE001 — 任务失败要如实回给调用方，不回滚也不假装成功
