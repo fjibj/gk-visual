@@ -94,11 +94,15 @@ class _BoomVdb:
 
 
 class _FakeGraph:
-    def __init__(self, edges=None):
+    def __init__(self, edges=None, nodes=None):
         self._edges = edges or []
+        self._nodes = nodes or []
 
     async def get_all_edges(self):
         return self._edges
+
+    async def get_all_nodes(self):
+        return self._nodes
 
 
 class _FakeRag:
@@ -235,6 +239,33 @@ def test_hit_trace_uses_full_graph_for_paths():
     assert _names(out) == {"周杰伦", "台北", "演唱会"}
     assert _layers(out)["演唱会"] == "path"
     assert _rel_keys(out) == {"周杰伦->演唱会", "演唱会->台北"}
+
+
+def test_hit_trace_path_node_attrs_come_from_graph():
+    """路径中间节点常常不在向量召回的上下文里：属性必须回图里取。
+
+    不回图取，注入里就只剩一个裸名字（真图上实测出现过「[path] MVP」这种空段）——
+    既看不出它是什么、又白占预算。
+    """
+    rag = _FakeRag(
+        graph=_FakeGraph(
+            edges=[
+                {"source": "周杰伦", "target": "演唱会"},
+                {"source": "演唱会", "target": "台北"},
+            ],
+            nodes=[
+                {"entity_id": "演唱会", "entity_type": "event", "description": "一场演出"},
+                {"entity_id": "台北", "entity_type": "location", "description": "城市"},
+            ],
+        )
+    )
+    trace = _trace(["周杰伦", "台北"], [], ll_kw=["周杰伦"])  # 上下文里根本没有「演唱会」
+    out = asyncio.run(_hit_trace(rag, "周杰伦在哪里开演唱会", "演唱会在台北举办。", trace))
+
+    by_name = {e["name"]: e for e in out["entities"]}
+    assert by_name["演唱会"]["layer"] == "path"
+    assert by_name["演唱会"]["type"] == "event"
+    assert by_name["演唱会"]["description"] == "一场演出"
 
 
 def test_hit_trace_vector_fallback_is_flagged():

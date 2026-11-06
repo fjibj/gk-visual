@@ -36,13 +36,32 @@ from graphkb.memory_api import MemoryTools  # noqa: E402
 from graphkb.rag import init_rag  # noqa: E402
 from graphkb.triggers import EntityProbe, SessionGate, TriggerEngine  # noqa: E402
 
-TASK = "帮我整理张三的入职材料，顺便核对北京那边的社保"
-ERROR = "KeyError: 张三 的 'join_date' 字段缺失"
-OFFTOPIC = "今天天气不错，把桌面上的文件归档一下"
-NAMED = "张三在哪工作"
-
-SESSION_NOTE = """2026-11-06 复盘：张三这周把入职材料补齐了，社保由北京那边的 HR 对接。
-另外确认了字节跳动的办公地点就在北京，通勤大约 40 分钟。"""
+TEXTS = {
+    # 小图（data/ 里那 17 个实体的 toy 库）：每条锚都能对上实体，好讲清楚机制
+    "toy": {
+        "task": "帮我整理张三的入职材料，顺便核对北京那边的社保",
+        "error": "KeyError: 张三 的 'join_date' 字段缺失",
+        "recall": "刚才那张表里张三的入职日期对不上",
+        "offtopic": "今天天气不错，把桌面上的文件归档一下",
+        "named": "张三在哪工作",
+        "after": "张三的入职材料后来怎么弄的？",
+        "after_needle": "社保",
+        "note": """2026-11-06 复盘：张三这周把入职材料补齐了，社保由北京那边的 HR 对接。
+另外确认了字节跳动的办公地点就在北京，通勤大约 40 分钟。""",
+    },
+    # 真图（探针 B 灌的 4 份设计文档：260 实体 / 371 关系）：词汇就是本项目的词汇
+    "real": {
+        "task": "帮我整理触发器的设计，重点核对无感记忆和 memory.search 的预算，写进 harness 的说明",
+        "error": "KeyError: answer_context 里 'budget_used' 字段缺失",
+        "recall": "刚才那段 harness 说明里，H2卡壳查 的触发条件好像不对",
+        "offtopic": "今天天气不错，把桌面上的文件归档一下",
+        "named": "触发器跟无感记忆是什么关系？",
+        "after": "H3回想查 后来是怎么定的？",
+        "after_needle": "",
+        "note": """2026-11-06 结论：H3回想查 只在探针命中已有实体时才发起，探不到实体就不查、不扣总闸。
+这条比触发器设计文档里写的严一格，理由是在双文本改造后，无实体查询会退回人类面语义。""",
+    },
+}
 
 
 def _line(step: str, event: dict, result: dict | None) -> str:
@@ -68,7 +87,17 @@ async def main() -> int:
     parser.add_argument("--workspace", default="", help="库目录（默认临时新建一个干净库）")
     parser.add_argument("--ingest", action="store_true", help="连写侧一起跑（会真调一次 LLM 抽取）")
     parser.add_argument("--gate", type=int, default=None, help="会话总闸 K（默认读 GKB_TRIGGER_K）")
+    parser.add_argument(
+        "--preset",
+        choices=sorted(TEXTS),
+        default="toy",
+        help="用哪套演示文本：toy=张三小图（默认）；real=探针 B 那张 260 实体的真图",
+    )
     args = parser.parse_args()
+    texts = TEXTS[args.preset]
+    TASK, ERROR = texts["task"], texts["error"]
+    OFFTOPIC, NAMED = texts["offtopic"], texts["named"]
+    SESSION_NOTE = texts["note"]
 
     load_dotenv()
     cfg = load_config()
@@ -77,6 +106,7 @@ async def main() -> int:
     else:
         cfg.working_dir = tempfile.mkdtemp(prefix="gkb_demo_")
     print(f"workspace : {cfg.working_dir}")
+    print(f"预设      : {args.preset}")
     print(f"模型      : {cfg.llm.provider}/{cfg.llm.model} | embedding {cfg.embedding.provider}/{cfg.embedding.model}")
     print()
 
@@ -112,7 +142,7 @@ async def main() -> int:
         steps = [
             ("① 起手 H1", await engine.on_plan(TASK)),
             ("② 埋坑 H2", await engine.on_stuck(ERROR)),
-            ("③ 回想 H3", await engine.on_context("刚才那张表里张三的入职日期对不上")),
+            ("③ 回想 H3", await engine.on_context(texts["recall"])),
             ("④ 离题 H3", await engine.on_context(OFFTOPIC)),
             ("⑤ 点名 H0", await engine.on_named(NAMED)),
         ]
@@ -160,11 +190,13 @@ async def main() -> int:
 
         # ---- 写侧验证：刚存进去的那件事，能不能被想起来 ----
         if args.ingest:
-            again = await engine.on_named("张三的入职材料后来怎么弄的？")
+            again = await engine.on_named(texts["after"])
             print("=== 写后回想（H0 点名同一件事）===")
             print("  " + _line("⑧ 写后 H0", again.event.as_dict(), again.result))
             ctx = (again.result or {}).get("answer_context") or ""
-            print("  —— 注入里有没有刚学到的内容：", "有" if "社保" in ctx else "（没提到社保，可看 spill_refs）")
+            needle = texts["after_needle"]
+            if needle:
+                print("  —— 注入里有没有刚学到的内容：", "有" if needle in ctx else "（没提到，可看 spill_refs）")
             print()
 
         # ---- 审计：每个事件都在 engine.trace() 里 ----
