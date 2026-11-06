@@ -51,3 +51,6 @@ include = ["graphkb*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: 需要真实 workspace 与本地 Ollama 的现场用例（CI 里自动 skip；`-m 'not slow'` 可跳过）",
+]

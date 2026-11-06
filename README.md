@@ -103,10 +103,16 @@ python -m graphkb.cli trigger plan "帮我整理张三的入职材料"    # 抬�
 ## 6. 验证
 
 ```bash
-python -m pytest -q                                   # 单元测试（当前 141 passed，全程离线，LLM/embedding 走 mock）
+python -m pytest -q                                   # 单元 + 真图回归（当前 163 passed，全程离线，LLM/embedding 走 mock）
+python -m pytest -q -m "not slow"                      # 跳过需要真库 + Ollama 的现场用例（CI 里自动 skip）
 python holdout/evaluate.py slice-7-retrieval-visualization --version slice-7-v1
 python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slice-8-v1
 ```
+
+**真图回归**（`tests/test_real_graph.py`）：不只拿 4~5 个节点的玩具图测，而是用一张真图夹具跑完整链路（分层 → 注入 → 探针）。
+夹具在 `tests/fixtures/realgraph/`，由 `scripts/capture_real_fixture.py` 从真库录一份（graphml + `aquery_data` / `entities_vdb` 的原样返回）；
+默认**脱敏**——只保留结构（节点数、度数、`<SEP>` 分段与长度、带点号的方法名），文字换成等长填充，因为仓库是公开的。
+另外一条 `slow` 用例会在本地自动拷一份真库跑 H1 / 离题 H3 / H0，**不用手动搬数据**；CI 里没那张图，自动 skip。
 
 holdout 是 IDSD 的「考卷区」：场景由 `expectations.md` 派生、不回看实现，构建期对代理不可见（见 `holdout/README.md` 与 `.claudeignore`）。判卷结果存档在 `holdout/results/<版本>/report.json`。
 

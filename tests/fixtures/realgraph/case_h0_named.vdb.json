@@ -1,0 +1,62 @@
+[
+ {
+  "__id__": "symbol_111",
+  "__created_at__": 1793799113,
+  "entity_name": "条目235",
+  "content": "该条目记录了一项与整体方案相关的要点说明，供后续复盘",
+  "source_id": "doc-5875bce4e3383cc0f933df094981b87c-chunk-000",
+  "file_path": "doc-01.md",
+  "__metrics__": "0.7344415",
+  "id": "symbol_111",
+  "distance": "0.7344415",
+  "created_at": 1793799113
+ },
+ {
+  "__id__": "symbol_105",
+  "__created_at__": 1793799237,
+  "entity_name": "条目159",
+  "content": "该条目记录了一项与整体方案相关的要点说明，供后续复盘查阅。该条目记录了一项与整体方案相关的要点说明，供后续复盘查阅。该条目记录了一项与整体方案相关的要点说明，供后",
+  "source_id": "doc-7ee5801a394b3842d16f3c2807a85984-chunk-000",
+  "file_path": "doc-01.md",
+  "__metrics__": "0.7099786",
+  "id": "symbol_105",
+  "distance": "0.7099786",
+  "created_at": 1793799237
+ },
+ {
+  "__id__": "symbol_107",
+  "__created_at__": 1793799113,
+  "entity_name": "条目216",
+  "content": "该条目记录了一项与整体方案相关的要点说明，供后续复盘查阅。该条目记录了一项与整体方案",
+  "source_id": "doc-5875bce4e3383cc0f933df094981b87c-chunk-000",
+  "file_path": "doc-01.md",
+  "__metrics__": "0.68921864",
+  "id": "symbol_107",
+  "distance": "0.68921864",
+  "created_at": 1793799113
+ },
+ {
+  "__id__": "symbol_106",
+  "__created_at__": 1793799113,
+  "entity_name": "symbol_38",
+  "content": "该条目记录了一项与整体方案相关的要点说明，供后续复盘查阅。该条目记录",
+  "source_id": "doc-5875bce4e3383cc0f933df094981b87c-chunk-000",
+  "file_path": "doc-01.md",
+  "__metrics__": "0.66672134",
+  "id": "symbol_106",
+  "distance": "0.66672134",
+  "created_at": 1793799113
+ },
+ {
+  "__id__": "symbol_109",
+  "__created_at__": 1793799113,
+  "entity_name": "symbol_44",
+  "content": "该条目记录了一项与整体方案相关的要点说明，供后续复盘查阅。该条目记录",
+  "source_id": "doc-5875bce4e3383cc0f933df094981b87c-chunk-000",
+  "file_path": "doc-01.md",
+  "__metrics__": "0.66427314",
+  "id": "symbol_109",
+  "distance": "0.66427314",
+  "created_at": 1793799113
+ }
+]

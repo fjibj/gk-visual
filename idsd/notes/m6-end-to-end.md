@@ -106,7 +106,7 @@ AssertionError: [('delete','笔记A'),('delete','笔记B'),('insert',['笔记A']
 表现出来是「刚写完就忘了」。这条不是 demo 的细节，是 harness 必须记住的一条：
 **写侧成功后要重载探针**，否则新记忆对自动钩子不可见（H0 不受影响，它不靠探针）。
 
-## 5. 换真图跑一遍（探针 B 那 260 个实体）
+## 6. 换真图跑一遍（探针 B 那 260 个实体）
 
 小图（`data/`，17 实体）只能证明「机制对」，证明不了「真库能不能用」。
 把探针 B 灌的那张真图（`C:\Users\fjibj\cola\outputs\gk-probe\probe-data`，
@@ -143,7 +143,39 @@ python scripts/demo_agent_memory.py --workspace <复制的库> --preset real
 可选方向：拼句去重、按段截断而不是按总长截断、或把 800 按层分配（anchor 占大头、path 只留一句）。
 这属于注入策略，不是 bug，没动。
 
-## 6. 边界
+## 7. 真图回归：不再手动拷数据跑
+
+上一节是手动跑的（拷库 → 改 demo 文本 → 看输出）。手动跑一次只能发现一次问题，
+所以固化成两道用例（`tests/test_real_graph.py`）：
+
+**回放组（CI 跑）** —— 夹具进内存，零网络、零 LLM：
+
+| 用例 | 钉住什么 |
+| --- | --- |
+| `test_fixture_is_sanitized_and_real_shaped` | 夹具要像真图（≥ 50 节点、描述非空、带点号名字）且已脱敏 |
+| `test_fixture_descriptions_keep_sep_structure` | `<SEP>` 拼接的长描述必须留着（密度问题从这里来） |
+| `test_layers_on_real_graph` | 分层不跑到图外；关系两端都在命中集；层只有三态 |
+| `test_paths_are_consistent` | 中间节点必须是 path（锚点/引用点自己优先）；真图上确实存在中间节点 |
+| `test_no_entity_lost_attributes_on_real_graph` | 这次那个 bug：中间节点必须从图上拿到 type / description |
+| `test_replay_is_deterministic` | 同一夹具两次回放结果一致 |
+| `test_injection_lines_are_never_bare_names` | 注入里每行都带类型 + 描述 |
+| `test_injection_respects_budget_and_accounts_every_item` | 预算硬上限；装不下的进 spill，引用不重复、前缀合法 |
+| `test_injection_on_real_graph_saturates_realistically` | 800 token 在真图上装不完这个事实（防止夹具退化成小图） |
+| `test_probe_loads_real_scale_names` / `..._ignores_off_topic_text` | 80 个名字同时挂在探针上；离题句 0 命中 |
+| `test_single_anchor_does_not_fabricate_paths` | 单锚点连不出路径时不许拿邻居充数 |
+
+**现场组（本地跑，CI skip）** —— `test_live_real_workspace_end_to_end`：
+它在用例里自己把真库拷进 `tmp_path`（不碰原件），然后跑探针 → H1 → 离题 H3 → H0，
+断言：探针 ≥ 200 个名字、H1 命中且注入无裸名字、离题句不查、H0 豁免总闸。
+需要真库 + 本地 Ollama，两者缺一就 skip；`-m "not slow"` 也可以主动跳过。
+
+**夹具为什么脱敏**：夹具要进公开仓库，而真图里的描述是从我的设计文档抽出来的句子
+（含项目名、路线代号）。`scripts/capture_real_fixture.py` 默认把实体名与文本换成等长填充，
+只保留结构——节点数、度数、`<SEP>` 分段数与每段长度、带点号的方法名——
+token 估算因此仍然可复算。要留原始副本用 `--raw`，但别提交。
+录制时脚本自己拷一份临时库，不动原件。
+
+## 8. 边界
 
 - **单进程**：锁只在进程内有效。多进程/多机写同一 workspace 需要文件锁，未做。
 - **锁粒度是整个 upsert**：不同文档的覆盖更新也排队。个人库写入频率低，排队的代价远小于交错的代价；
@@ -152,8 +184,9 @@ python scripts/demo_agent_memory.py --workspace <复制的库> --preset real
   `ingest` 的返回里有 `entities`，harness 可以增量 `probe.replace(...)`，也可以整体 `refresh`。
 - **demo 依赖真库内容**：①–⑦ 的 token 数字取决于 `data/` 里有什么，换库就不再一样。
 
-## 8. 测试
+## 9. 测试
 
 - `tests/test_documents.py` 6 → 5 passed（删掉恒真的旧用例，加 `test_concurrent_upserts_do_not_interleave`）。
 - `tests/test_render.py` 新增 `test_hit_trace_path_node_attrs_come_from_graph`（真图那个裸名字缺陷的回归）。
-- 全量 `pytest -q`：**149 passed**（本机 lightrag 1.5.7，与 CI 同版）。
+- `tests/test_real_graph.py` 新增 13 条离线回放用例 + 1 条现场用例。
+- 全量：**163 passed**（含现场用例，本机真库 260 实体 + Ollama）；CI 里现场用例 skip，报 162 passed / 1 skipped。

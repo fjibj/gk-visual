@@ -1,0 +1,31 @@
+{
+ "captured_at": "2026-11-06T21:17:04",
+ "sanitized": true,
+ "source_graph": {
+  "nodes": 260,
+  "edges": 371,
+  "components": 24
+ },
+ "fixture_graph": {
+  "nodes": 80,
+  "edges": 150,
+  "components": 1,
+  "largest_component": 80,
+  "nodes_without_description": 0
+ },
+ "top_k": 5,
+ "cases": [
+  {
+   "name": "h1_plan",
+   "question": "条目234 条目215 part1.part2_134 symbol_120",
+   "anchor_text": "条目234 条目215 part1.part2_134 symbol_120",
+   "evidence_text": "帮我整理条目234的设计，重点核对条目215和 part1.part2_134 的预算，写进 symbol_120 的说明"
+  },
+  {
+   "name": "h0_named",
+   "question": "条目234 条目215",
+   "anchor_text": "条目234 条目215",
+   "evidence_text": "条目234跟条目215是什么关系？"
+  }
+ ]
+}
