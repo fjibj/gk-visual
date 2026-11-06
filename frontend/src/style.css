@@ -285,6 +285,60 @@ body {
   color: #fff;
 }
 
+/* M4 溯源：人工痕迹图例（左上角，只在图里有人工元素时出现） */
+#prov-legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 15;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #57606a;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(31, 35, 40, 0.08);
+}
+
+#prov-legend.hidden {
+  display: none;
+}
+
+#prov-legend .lg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.7;
+}
+
+#prov-legend .lg-mark {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* 面板里的「来源」块：只读展示，不搆在表单输入里 */
+#panel .prov-box {
+  border: 1px solid #d0d7de;
+  border-left: 3px solid #8250df;
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: #faf9ff;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #57606a;
+}
+
+#panel .prov-origin {
+  font-weight: 600;
+  color: #1f2328;
+}
+
+#panel .prov-warn {
+  color: #7a5c00;
+  margin-top: 2px;
+}
+
 /* ---- answer panel ---- */
 
 #answer-panel {

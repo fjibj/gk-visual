@@ -1,7 +1,25 @@
+export type Origin = 'extracted' | 'manual' | 'mixed' | 'unknown'
+
+/** M4 溯源：这条实体/边是怎么来的，以及来自哪几篇文档 */
+export interface Provenance {
+  /** 有人碰过（手工创建或改过） */
+  manual: boolean
+  /** 来源文档标题（给人看） */
+  docs: string[]
+  /** 来源文档 id（给程序用） */
+  doc_ids: string[]
+  /** 引用了多少块内容 */
+  chunks: number
+  /** 有多少块已经查不到了（所属文档被覆盖/删除） */
+  unresolved: number
+}
+
 export interface GraphNode {
   id: string
   type: string
   description: string
+  origin?: Origin
+  provenance?: Provenance
 }
 
 export interface GraphEdge {
@@ -10,6 +28,8 @@ export interface GraphEdge {
   description: string
   keywords: string
   weight: number | null
+  origin?: Origin
+  provenance?: Provenance
 }
 
 export interface GraphData {

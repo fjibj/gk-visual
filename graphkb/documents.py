@@ -6,11 +6,34 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 
 from lightrag.base import DocStatus
 from lightrag.utils import GRAPH_FIELD_SEP
+
+
+_WRITE_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
+
+
+def _write_lock(rag) -> asyncio.Lock:
+    """同一库的写操作串行化（进程内，M6）。
+
+    为什么需要：`upsert_document` 是「先删后插」两步，两条并发写同一库时，A 的删除
+    可能落在 B 的插入之后，图收敛就打架；LightRAG 自己有「按实体名」的键锁，
+    但管不住我们这两步式覆盖。
+
+    锁按 (事件循环, 库目录) 分桶：不同 workspace 可以并行，互不拖累；换一次 `asyncio.run`
+    也不会拿着上一轮循环的锁去抢（Lock 会绑定循环）。
+    """
+    loop = asyncio.get_running_loop()
+    key = (id(loop), str(getattr(rag, "working_dir", "") or id(rag)))
+    lock = _WRITE_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _WRITE_LOCKS[key] = lock
+    return lock
 
 
 def slugify(title: str) -> str:
@@ -89,28 +112,31 @@ async def upsert_document(rag, title: str, content: str) -> UpsertResult:
     """上传 / 覆盖更新文档：同 doc_id 已存在则先删旧再插新。
 
     spike 证实：同 doc_id 直接重插会被 LightRAG duplicate 检测拦截，必须「先删后插」。
+    两步之间不能被另一个写插进来，所以整段包在库级锁里（见 `_write_lock`）。
     """
     if not str(content).strip():
         raise ValueError("文档内容不能为空")
     doc_id = slugify(title)
-    docs = await _processed_docs(rag)
-    existed = doc_id in docs
-    if existed:
-        await rag.adelete_by_doc_id(doc_id)
+    async with _write_lock(rag):
+        docs = await _processed_docs(rag)
+        existed = doc_id in docs
+        if existed:
+            await rag.adelete_by_doc_id(doc_id)
 
-    await rag.ainsert(content, ids=[doc_id], file_paths=[str(title).strip() or doc_id])
+        await rag.ainsert(content, ids=[doc_id], file_paths=[str(title).strip() or doc_id])
 
-    docs = await _processed_docs(rag)
-    st = docs.get(doc_id)
-    e, r = await _doc_entity_relation_counts(rag, st.chunks_list if st else [])
-    return UpsertResult(
-        doc_id=doc_id,
-        created=not existed,
-        entity_count=e,
-        relation_count=r,
-    )
+        docs = await _processed_docs(rag)
+        st = docs.get(doc_id)
+        e, r = await _doc_entity_relation_counts(rag, st.chunks_list if st else [])
+        return UpsertResult(
+            doc_id=doc_id,
+            created=not existed,
+            entity_count=e,
+            relation_count=r,
+        )
 
 
 async def delete_document(rag, doc_id: str) -> dict:
     """删除文档（LightRAG 收敛：独有实体/关系清理，共享实体用剩余文档重建）。"""
-    return await rag.adelete_by_doc_id(doc_id)
+    async with _write_lock(rag):
+        return await rag.adelete_by_doc_id(doc_id)

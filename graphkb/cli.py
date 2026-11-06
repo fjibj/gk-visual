@@ -11,11 +11,13 @@ from dotenv import load_dotenv
 
 from .config import load_config
 from .ingest import ingest_document
+from .memory_api import MemoryTools
 from .merge import merge_entities
 from .providers import build_embedding, build_llm
 from .query import query
 from .rag import init_rag
 from .render import render
+from .triggers import EntityProbe, SessionGate, TriggerEngine
 
 
 async def _doctor() -> int:
@@ -100,6 +102,39 @@ async def _merge(sources: list[str], target: str) -> int:
     return 0
 
 
+async def _trigger(phase: str, anchor: str, context: str = "", gate: int | None = None) -> int:
+    """最小 harness runner：手动抬一次钩子，打印触发事件与 memory.search 结果。
+
+    这不是完整的 harness，只是把「钩子会怎么发、发完记账成什么形状」变成可跑的命令：
+    H1/H2/H3 靠状态机信号触发，真人干活时怎么接是 harness 的事（M6 再跑闭环）。
+    """
+    cfg = load_config()
+    rag = await init_rag(cfg)
+    try:
+        probe = EntityProbe()
+        probe_size = await probe.refresh(rag)
+        tools = MemoryTools(cfg, rag)
+        engine = TriggerEngine(
+            search=tools.search,
+            probe=probe,
+            gate=SessionGate(gate if gate is not None else cfg.triggers.autonomous_limit),
+        )
+        if phase == "plan":
+            outcome = await engine.on_plan(anchor)
+        elif phase == "stuck":
+            outcome = await engine.on_stuck(anchor, context)
+        elif phase == "context":
+            outcome = await engine.on_context(anchor)
+        else:
+            outcome = await engine.on_named(anchor, context or None)
+    finally:
+        await rag.finalize_storages()
+
+    payload = {"probe_size": probe_size, **outcome.as_dict()}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _serve(host: str, port: int, reload: bool) -> int:
     """起 Web UI（后端 + 前端静态页）。前端需先 `npm run build`（见 README）。"""
     import uvicorn
@@ -131,6 +166,14 @@ def main() -> None:
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--reload", action="store_true", help="后端代码热重载（开发用）")
 
+    p_trigger = sub.add_parser(
+        "trigger", help="抬一次记忆钩子（plan=H1 / stuck=H2 / context=H3 / named=H0）并打印触发事件"
+    )
+    p_trigger.add_argument("phase", choices=["plan", "stuck", "context", "named"])
+    p_trigger.add_argument("anchor", help="钩子锚文本（任务描述 / 错误信息 / 上下文 / 点名问题）")
+    p_trigger.add_argument("--context", default="", help="H2/H0 的补充文本（上下文 / 证据）")
+    p_trigger.add_argument("--gate", type=int, default=None, help="本次会话总闸 K（默认读 GKB_TRIGGER_K）")
+
     args = parser.parse_args()
     load_dotenv()
 
@@ -144,6 +187,10 @@ def main() -> None:
         raise SystemExit(asyncio.run(_merge(args.sources, args.target)))
     if args.cmd == "serve":
         raise SystemExit(_serve(args.host, args.port, args.reload))
+    if args.cmd == "trigger":
+        raise SystemExit(
+            asyncio.run(_trigger(args.phase, args.anchor, args.context, args.gate))
+        )
     parser.print_help()
 
 

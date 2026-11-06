@@ -28,6 +28,7 @@ from .config import load_config
 from .documents import list_documents, upsert_document
 from .ingest import _entity_name
 from .merge import merge_entities
+from .provenance import annotate
 from .query import query as run_query
 from .rag import init_rag
 
@@ -71,14 +72,19 @@ SUPPORTED_UPLOAD_SUFFIXES = frozenset({"txt", "md", "docx", "xlsx", "pptx", "pdf
 async def _read_graph(rag) -> dict:
     nodes = await rag.chunk_entity_relation_graph.get_all_nodes()
     edges = await rag.chunk_entity_relation_graph.get_all_edges()
+    # M4：来源标签。origin=extracted|manual|mixed|unknown，provenance 带来源文档
+    node_prov = await annotate(rag, nodes)
+    edge_prov = await annotate(rag, edges)
     return {
         "nodes": [
             {
                 "id": _entity_name(n),
                 "type": n.get("entity_type") or "",
                 "description": n.get("description") or "",
+                "origin": p.origin,
+                "provenance": p.as_dict(),
             }
-            for n in nodes
+            for n, p in zip(nodes, node_prov)
         ],
         "edges": [
             {
@@ -87,8 +93,10 @@ async def _read_graph(rag) -> dict:
                 "description": e.get("description") or "",
                 "keywords": e.get("keywords") or "",
                 "weight": e.get("weight"),
+                "origin": p.origin,
+                "provenance": p.as_dict(),
             }
-            for e in edges
+            for e, p in zip(edges, edge_prov)
         ],
     }
 

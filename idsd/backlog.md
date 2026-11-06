@@ -77,13 +77,17 @@
 
 ## 9. 实体/边溯源标签（LLM 抽取 vs 手工创建）
 
-- **状态**：候选（用户 2026-08-22 拍板「记下来，后面再做」）。来源：graphify 对比分析。
+- **状态**：**已实现（M4，2026-11-06）**。原为候选（用户 2026-08-22 拍板「记下来，后面再做」），来源：graphify 对比分析。
 - **灵感**：graphify 每条边打 `EXTRACTED`（源码明确存在）/ `INFERRED`（推断）标签，「永远知道哪些是读到的、哪些是猜的」——与本项目约束 2「透明」同源。
-- **内容**：图里区分两类元素并给视觉标记：
-  - **LLM 抽取**：带 `source_id`（指向 chunk），可溯源到原文档；
-  - **手工创建**：无 source_id（`POST /api/entities` 不带 chunk 来源），纯人工录入。
-- **现状盘点**：信息已隐式存在——抽取实体有 `source_id`（`<SEP>` 分隔的 chunk 列表），手工新建的没有；前端未展示这个区别。
-- **实现线索**：后端 `/api/graph` 透传 `source_id` 是否为空（或算个 `origin: extracted|manual` 字段）；前端节点/边加视觉标记（如手工建的加小图标/虚线边框）；详情面板显示溯源（抽取的列出所属文档，可跳转）。零检索改动、零 LLM 成本。
+- **落地方式**：不另存账本，**从 LightRAG 自己留的痕读出来**（`graphkb/provenance.py`）：
+  - 抽取来的：`source_id` = 若干 chunk_id（`<SEP>` 分隔）；
+  - 手工新建的：`source_id` = `"manual_creation"`（LightRAG `utils_graph.acreate_entity/acreate_relation` 的默认哨兵）；
+  - 两者都有（编辑过抽取实体、合并把手工实体并进来）：→ `mixed`。
+- **四种 origin**：`extracted` / `manual` / `mixed` / `unknown`（没有任何来源记录的老数据）。无阈值、无 LLM。
+- **来源文档**：不走节点自己的 `file_path`（老数据里是 `unknown_source`），一律批量查 `rag.text_chunks.get_by_ids` 拿 `full_doc_id`；块已被删的计入 `unresolved`，如实说「这部分已无据可查」。
+- **前端**：人工痕迹 = 标签后缀 `✎` + 紫色底晕（**不用边框**——边框通道已被 S7 的命中分层占用：实线环=锚点、虚线环=引用/路径）；详情面板顶部只读块显示「人工创建 / 文档抽取 + 人工改动」与来源文档；左上角图例只在图里存在人工元素时出现。
+- **契约**：`/api/graph` 的每个 node/edge、`memory.search` 的 `hits`、`memory.expand` 的 `items` 都带 `origin` + `provenance{manual,docs,doc_ids,chunks,unresolved}`。
+- **代价**：只区分到「有没有人碰过」，区分不出「谁、什么时候碰的」——那需要真审计日志，不在本阶段。
 
 ## 10. 路径查询（A 到 B 怎么关联起来）
 
@@ -152,3 +156,15 @@
 - **实测差异**（对比两边 wheel 里的 `lightrag/lightrag.py`）：1.5.7 删掉了 `get_docs_by_status(status)`，也没在同层加替代方法；能力搬到底层 `doc_status.get_docs_by_statuses(statuses: list[DocStatus], strict=False) -> dict[str, DocProcessingStatus]`，**1.5.6 也早就有这个**。
 - **改法**：`graphkb/documents.py` 三处调用改走 `rag.doc_status.get_docs_by_statuses([DocStatus.PROCESSED])`（收进 `_processed_docs()`），不把 lightrag 钉死在 1.5.6；`pyproject.toml` 同时加下界 `>=1.5.6,<1.6`——1.6 再动就等 CI 说话。
 - **残留**：holdout 没在 1.5.7 上跑过（CI 只跑 pytest）；下次升级 lightrag 前，本地先跑一遍 S3/S5/S7/S8。
+
+## 17. 符号型实体抽不出来（代码名/常量名建不了节点）
+
+- **状态**：候选，本阶段不做。来源：探针 B 结论 §3「边界 2」（2026-11-04）。
+- **现象**：4 份设计文档灌图（260 实体 / 371 关系）后跑 agent 场景检索，`unmatched_keywords` 里反复出现「文档里满篇、图上无节点」的词：`graphkb`、`K=5`、`HIT_MIN_RATIO`、`budget_truncated`、`分数阈值`、`连通性`、`最短路`、`编排层`。
+- **原因**：LightRAG 的自动抽取偏自然语言实体，对代码符号（包名、常量名、`K=5` 这类）几乎不建节点；而 agent 的任务描述里恰恰满是代码符号——这是 agent 记忆的特有短板，也呼应 JitKnow 分析里的「自动抽取、类型不可控」。
+- **为什么本阶段不做**：任何解法都要新增规则族（抽取前预处理 / 抽取后补节点 / 本体 schema），撞约束 6「规则预算 ≤ 1」。
+- **候选方向**：
+  1. 抽取前对代码符号做归一与保留（fenced code、`snake_case`、`CONST_NAME`、`K=5`）；
+  2. 留到本体层 schema 阶段，给符号类实体单独定型；
+  3. 只在写侧（`memory.ingest` 的 `source=session`）对代码片段做兜底节点。
+- **判据**：先量真实任务里 `unmatched_keywords` 的符号类占比，持续 >20% 再谈值不值得动。

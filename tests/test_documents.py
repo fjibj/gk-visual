@@ -5,7 +5,12 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from graphkb.documents import _doc_entity_relation_counts, slugify, upsert_document
+from graphkb.documents import (
+    _doc_entity_relation_counts,
+    delete_document,
+    slugify,
+    upsert_document,
+)
 
 
 def test_slugify():
@@ -87,6 +92,50 @@ def test_upsert_overwrites_existing_document():
     result = asyncio.run(upsert_document(rag, "笔记A", "新内容"))
     assert result.created is False
     assert rag.calls == [("delete", "笔记A"), ("insert", ["笔记A"])]
+
+
+# ---- M6：同库写串行化 ----
+
+
+class _SlowRag(_FakeRag):
+    """每次写都让出一次事件循环，把「并发」真的摆到台面上。"""
+
+    async def ainsert(self, text, ids=None, file_paths=None):
+        await asyncio.sleep(0.005)
+        await super().ainsert(text, ids=ids, file_paths=file_paths)
+
+    async def adelete_by_doc_id(self, doc_id):
+        await asyncio.sleep(0.005)
+        return await super().adelete_by_doc_id(doc_id)
+
+
+def _pairs(calls):
+    """把调用序列切成 (delete, insert) 对，用来检查有没有被别的写插进来。"""
+    pairs = []
+    i = 0
+    while i < len(calls):
+        assert calls[i][0] == "delete", calls
+        assert calls[i + 1][0] == "insert", calls
+        pairs.append((calls[i][1], calls[i + 1][1][0]))
+        i += 2
+    return pairs
+
+
+def test_concurrent_upserts_do_not_interleave():
+    """两条并发覆盖更新：A 的「删」与「插」之间不能被 B 插进来（否则图收敛会打架）。"""
+    rag = _SlowRag(NODES, EDGES)
+    for title in ("笔记A", "笔记B"):
+        rag.docs[title] = SimpleNamespace(file_path=title, content_length=1, chunks_list=[])
+
+    async def run():
+        await asyncio.gather(
+            upsert_document(rag, "笔记A", "新内容A"),
+            upsert_document(rag, "笔记B", "新内容B"),
+        )
+
+    asyncio.run(run())
+    pairs = _pairs(rag.calls)
+    assert sorted(pairs) == [("笔记A", "笔记A"), ("笔记B", "笔记B")]
 
 
 def test_doc_entity_relation_counts():
