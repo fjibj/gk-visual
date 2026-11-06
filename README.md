@@ -95,6 +95,7 @@ python -m graphkb.cli query "张三在哪工作" --json           # 原始 trace
 python -m graphkb.cli merge 张一一 --into 张三              # 显式实体对齐
 python -m graphkb.cli doctor                                # 配置与连通性自检
 python -m graphkb.cli serve --port 8001 --reload            # 换端口 / 后端热重载
+python -m graphkb.cli trigger plan "帮我整理张三的入职材料"    # 抬一次记忆钩子（见 §11）
 ```
 
 装好包后同样的命令可写作 `graphkb query ...`。
@@ -102,7 +103,7 @@ python -m graphkb.cli serve --port 8001 --reload            # 换端口 / 后端
 ## 6. 验证
 
 ```bash
-python -m pytest -q                                   # 单元测试（当前 118 passed，全程离线，LLM/embedding 走 mock）
+python -m pytest -q                                   # 单元测试（当前 141 passed，全程离线，LLM/embedding 走 mock）
 python holdout/evaluate.py slice-7-retrieval-visualization --version slice-7-v1
 python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slice-8-v1
 ```
@@ -125,6 +126,7 @@ graphkb/
   server.py      # FastAPI：/api/graph /api/query /api/documents /api/entities ... + 静态托管
   memory_api.py  # Agent 记忆面逻辑：search / expand / ingest / ingest_status + Inline&Spill（不 import mcp，可离线测）
   mcp_server.py  # MCP 适配器（stdio）：把 memory_api 挂成工具；日志走 stderr，stdout 只过 JSON-RPC
+  triggers.py    # M5 触发器：三钩子 + H0 兜底 + 会话总闸 + 实体探针（不 import mcp，可离线测）
 frontend/
   src/main.ts    # Cytoscape 图 + 检索高亮 + 编辑面板（无框架，原生 TS）
   src/api.ts     # 后端契约类型
@@ -196,7 +198,35 @@ graphkb-mcp --workspace ws-personal          # 或 --workspace ws-team-fangjin
 
 已知边界：任务表在进程内存里（server 重启 `job_id` 即失效）；`memory.ingest` 的 `origin` 参数（`doc`/`session`/`note`）目前只回显不落库——它与图上的 `origin`（`extracted`/`manual`）不是同一个维度：后者由 LightRAG 的 `source_id` 判定，前者是“记忆从哪来”；`spill_refs` 能取回的只有“还在库里”的东西（实体/边/chunk 被删就报 `missing`）；token 数是粗估（CJK 按 1 字 ≈ 1 token，ASCII 按 4 字符 ≈ 1 token），偏保守不偏激进；暂无鉴权，只适合本机 stdio。
 
-## 11. 安全注意
+## 11. 触发器：三钩子 + 一兜底（M5）
+
+记忆不是“查一下就在”，得在对的时候把它叫醒。`graphkb/triggers.py` 回答的就是“什么时候查”：
+
+| 钩子 | 时机 | 锚（query 位） | 证据（task 位） |
+| --- | --- | --- | --- |
+| **H1 起手查** | Plan 入口 | 任务里探到的实体名；没有就用任务首句 | 任务描述 |
+| **H2 卡壳查** | 报错 / 重试 | 错误信息里的实体名 | 错误 + 上下文 |
+| **H3 回想查** | 上下文命中图实体时 | 命中实体名 | 当前上下文 |
+| **H0 显式点名** | 随时 | 点名文本 | 点名文本（逃生口，不占总闸） |
+
+三条硬约定：
+
+- **触发器 ≠ 判据**：触发器是调度（误触发只多花一次查询），判据是语义（必须可复算）。所以这里允许廉价启发式；「阈值是运气不是判据」约束的是判据。
+- **H3 用零成本探针**：当前上下文里**字面命中图上已有实体名**才算「似曾相识」——不走 embedding、不调 LLM、不做周期扫描。盲区是语义相关但字面无重叠 → 漏查，代价是少一次助攻而不是错误，旁边还有 H1/H2/H0 兜底。
+- **会话总闸 K=5**（`GKB_TRIGGER_K`）：只管「查几次」，每次查询另带 `budget` 管「查多重」。被拦下、探针不亮都**照样记事件**——「这次为什么没想起」必须和「为什么想起」一样看得见。
+
+手动抬一次钩子（最小 runner；真 harness 的状态机怎么接是它自己的事）：
+
+```bash
+python -m graphkb.cli trigger plan "帮我整理张三的入职材料"          # H1
+python -m graphkb.cli trigger stuck "KeyError: 张三 字段缺失"        # H2
+python -m graphkb.cli trigger context "刚才那张表里张三的日期不对"    # H3
+python -m graphkb.cli trigger named "张三在哪工作" --gate 0          # H0（总闸为 0 也照查）
+```
+
+输出是完整的触发事件（`hook / anchor / entities / queried / skipped / hit / degraded / gate_left / context_tokens`）+ `memory.search` 的原样结果。
+
+## 12. 安全注意
 
 - LLM/embedding 密钥只放本地 `.env`（已 gitignore），不要提交、不要贴进文档。
 - `serve` 默认绑 `127.0.0.1`，别在公网机器上直接 `--host 0.0.0.0`——UI 没有任何鉴权。

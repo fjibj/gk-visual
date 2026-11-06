@@ -48,10 +48,22 @@ class RetrievalConfig:
 
 
 @dataclass
+class TriggerConfig:
+    """harness 触发器的调度预算（M5）。
+
+    `autonomous_limit` 不是判据，是「别话瘁」的调度上限：误触发只多花一次查询，
+    漏触发只是维持现状。H0（显式点名）不受它限制。
+    """
+
+    autonomous_limit: int = 5
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    triggers: TriggerConfig = field(default_factory=TriggerConfig)
     working_dir: str = "./data"
     language: str = "Chinese"
     workspace: str = ""
@@ -81,6 +93,7 @@ def load_config() -> Config:
             max_hops=int(_env("GKB_MAX_HOPS", "4")),
             max_paths=int(_env("GKB_MAX_PATHS", "6")),
         ),
+        triggers=TriggerConfig(autonomous_limit=int(_env("GKB_TRIGGER_K", "5"))),
         working_dir=_env("GKB_WORKING_DIR", "./data"),
         language=_env("GKB_LANGUAGE", "Chinese"),
         workspace=_env("GKB_WORKSPACE", ""),
