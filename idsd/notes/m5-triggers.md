@@ -73,11 +73,15 @@ queried=true  hit=true  degraded=false  gate_left=4  context_tokens=295
 
 `hits.entities` 里 张三 的 `origin` 是 `mixed`（早期手工编辑过）——M4 的溯源在触发器路径上也生效。
 
-**同一次冒烟暴露的问题（已记，待修）**：注入里混进了 4 个与锚点无关的块
-（李雷在腾讯 / 周杰伦在台北）。原因是 `memory_api` 把 `trace.chunks` 全量交给 Inline&Spill，
-预算够就全进 `answer_context`。这与 S7 立下的那条不变量是同一个道理的反面案例——
-「命中必须落在问题核心实体的连通分量内」。下一步：块只在与命中实体的 `source_id` 有交集时
-才进注入，其余留在 `hits.chunks`（审计）与 `spill_refs`（按需取回）。
+**同一次冒烟暴露的问题（当天已修）**：注入里曾混进 4 个与锚点无关的块（李雷在腾讯 / 周杰伦在台北）。
+原因是 `memory_api` 把 `trace.chunks` 全量交给 Inline&Spill，预算够就全进 `answer_context`。
+这与 S7 那条不变量是同一个道理的反面案例——「命中必须落在问题核心实体的连通分量内」。
+
+修法：块只在与命中实体/关系的 `source_id` 有交集时才进注入（`provenance.chunk_ids` 已经算好了，
+不用额外查询）；其余仍在 `hits.chunks`，标 `linked=false`，并在 warnings 里明说多少块被挡在外面。
+溯源读不到时不饿死注入：退回全量、`linked=null`（不知道 ≠ 无关）。
+实测同一句 H1：295 → **247 token**，李雷/周杰伦两块不再进上下文，而北京那一块（李四的文档）
+留下来——因为「北京」确实是从那块里抽出来的，这是对的。
 
 ## 7. 边界
 

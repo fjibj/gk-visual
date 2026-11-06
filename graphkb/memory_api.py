@@ -441,8 +441,41 @@ class MemoryTools:
             for r in relationships
         ]
 
+        # 块只在与命中实体/关系有来源交集时才进注入：
+        # S7 那条不变量的反面案例——“话题相似但实体无关的不得算命中”；向量召回的块
+        # （top_k）本来就不是命中，把整块原文塞进 agent 上下文就是拿预算买噪声。
+        # 审计面不删：hits.chunks 仍列全，只是标上 linked。
+        linked_chunks: set[str] = set()
+        for p in list(ent_prov.values()) + list(rel_prov.values()):
+            linked_chunks.update(p.chunk_ids)
+        kept_chunks = [
+            c for c in chunks if str(c.get("chunk_id") or "") in linked_chunks
+        ]
+        if not linked_chunks:
+            # 溯源拿不到（块存储挂了 / 旧数据没记录）时不能把注入饿死，退回全量并说明
+            kept_chunks = list(chunks)
+        dropped = len(chunks) - len(kept_chunks)
+        chunks = [
+            {
+                **c,
+                "linked": (
+                    None
+                    if not linked_chunks
+                    else str(c.get("chunk_id") or "") in linked_chunks
+                ),
+            }
+            for c in chunks
+        ]
+        if dropped:
+            warnings.append(
+                f"{dropped} 块与命中实体没有来源交集，未进注入（话题相似 ≠ 实体相关）："
+                "它们仍在 hits.chunks 里，既没丢也没算命中；要原文可用 chunk:<id> 调 memory.expand。"
+            )
+
         if result.trace_hit:
-            bundle = build_answer_context(entities, relationships, chunks, b.max_context_tokens)
+            bundle = build_answer_context(
+                entities, relationships, kept_chunks, b.max_context_tokens
+            )
         else:
             bundle = ContextBundle()
             warnings.append("检索没有命中任何实体/关系：answer_context 为空，不会编造内容。")

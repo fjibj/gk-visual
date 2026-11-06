@@ -75,7 +75,8 @@ def origin_of(source_id) -> str:
 class Provenance:
     """一条实体/关系的来源说明。
 
-    `docs` 是给人看的名字（文档标题），`doc_ids` 是给程序用的身份。
+    `docs` 是给人看的名字（文档标题），`doc_ids` 是给程序用的身份，
+    `chunk_ids` 是“它到底读了哪几块”——注入时靠它判断哪些块与命中实体真有关系。
     `unresolved` 是「source_id 说有这块、块存储里却找不到」的条数——文档被覆盖/删除后
     就会出现，如实计数而不是当作没发生（那正是「这部分内容已经无据可查」）。
     """
@@ -84,6 +85,7 @@ class Provenance:
     manual: bool = False
     docs: list[str] = field(default_factory=list)
     doc_ids: list[str] = field(default_factory=list)
+    chunk_ids: list[str] = field(default_factory=list)
     chunks: int = 0
     unresolved: int = 0
 
@@ -92,6 +94,7 @@ class Provenance:
             "manual": self.manual,
             "docs": list(self.docs),
             "doc_ids": list(self.doc_ids),
+            "chunk_ids": list(self.chunk_ids),
             "chunks": self.chunks,
             "unresolved": self.unresolved,
         }
@@ -149,6 +152,7 @@ async def annotate(rag, records: list[dict]) -> list[Provenance]:
                 manual=MANUAL_SENTINEL in refs,
                 docs=docs,
                 doc_ids=doc_ids,
+                chunk_ids=chunk_refs,
                 chunks=len(chunk_refs),
                 unresolved=unresolved,
             )

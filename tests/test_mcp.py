@@ -575,6 +575,58 @@ def test_expand_items_carry_provenance():
 # ---------------------------------------------------------------- MCP 适配器接线
 
 
+# ---------------------------------------------------------------- 注入里的无关块
+
+
+class _MixedChunkRag(_FakeRag):
+    """命中实体引自 chunk-1；另外再捞回一块与实体完全无关的块（李雷/腾讯）。"""
+
+    async def aquery_data(self, question, param):
+        data = await super().aquery_data(question, param)
+        data["data"]["chunks"] = [
+            {"content": "张三在北京的字节跳动上班。", "chunk_id": "chunk-1"},
+            {"content": "李雷在腾讯工作，腾讯总部位于深圳。", "chunk_id": "c-unrelated"},
+        ]
+        return data
+
+
+def test_unrelated_chunk_not_injected_but_kept_for_audit():
+    """向量召回的块不等于命中：与命中实体没有来源交集的块不进注入，但审计面不删。
+
+    这是 S7 那条不变量的反面案例——「话题相似但实体无关的不得算命中」。
+    块里出现李雷/腾讯，与锚点张三没有来源交集，塞进 agent 上下文就是拿预算买噪声。
+    """
+    rag = _MixedChunkRag(answer=None)
+    tools = MemoryTools(Config(), rag)
+    out = asyncio.run(
+        tools.search({"query": "张三在哪工作", "task": "张三在字节跳动上班，常驻北京"})
+    )
+    assert "[chunk] 张三在北京的字节跳动上班" in out["answer_context"]
+    assert "李雷" not in out["answer_context"], out["answer_context"]
+    marks = {c["chunk_id"]: c["linked"] for c in out["hits"]["chunks"]}
+    assert marks == {"chunk-1": True, "c-unrelated": False}
+    assert any("没有来源交集" in w for w in out["warnings"]), out["warnings"]
+    assert out["degraded"] is False, "过滤无关块不是降级——命中判据没有变"
+
+
+def test_chunks_kept_when_provenance_is_unavailable():
+    """溯源拿不到时不能把注入饿死：退回全量块，并标 linked=None（不知道，而不是「无关」）。"""
+    tools, rag = _tools(answer=None)
+    rag.chunk_entity_relation_graph.nodes = [
+        {"entity_id": "张三", "entity_type": "person", "description": "工程师"},
+        {"entity_id": "北京", "entity_type": "location", "description": "城市"},
+        {"entity_id": "字节跳动", "entity_type": "organization", "description": "公司"},
+    ]
+    rag.chunk_entity_relation_graph.edges = [
+        {"source": "张三", "target": "字节跳动", "description": "任职", "keywords": "任职"}
+    ]
+    out = asyncio.run(
+        tools.search({"query": "张三在哪工作", "task": "张三在字节跳动上班，常驻北京"})
+    )
+    assert "[chunk]" in out["answer_context"]
+    assert all(c["linked"] is None for c in out["hits"]["chunks"])
+
+
 def test_mcp_server_registers_four_tools():
     pytest.importorskip("mcp", reason="MCP extra 没装：pip install -e \".[dev,mcp]\"")
     from graphkb.mcp_server import build_server

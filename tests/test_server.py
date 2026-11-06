@@ -137,6 +137,7 @@ def test_graph_marks_manual_origin(mock_config):
         "manual": True,
         "docs": [],
         "doc_ids": [],
+        "chunk_ids": [],
         "chunks": 0,
         "unresolved": 0,
     }
