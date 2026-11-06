@@ -164,10 +164,37 @@ python scripts/demo_agent_memory.py --workspace <复制的库> --preset real
 | `test_probe_loads_real_scale_names` / `..._ignores_off_topic_text` | 80 个名字同时挂在探针上；离题句 0 命中 |
 | `test_single_anchor_does_not_fabricate_paths` | 单锚点连不出路径时不许拿邻居充数 |
 
+**M1–M5 逐层真图用例**（2026-11-06 补，夹具多了 `text_chunks.json` 之后才可能）：
+
+| 层 | 用例 | 钉住什么 |
+| --- | --- | --- |
+| M1 | `test_m1_anchor_and_evidence_are_separated` | 同一检索、换文本就换分层：锚点只来自 `anchor_text`、证据只来自 `evidence_text`，引用点要么有路径要么进 `disconnected` |
+| M1 | `test_m1_human_face_takes_evidence_from_answer` | 人类面行为不变：证据位取那次生成的答案 |
+| M1 | `test_m1_equal_texts_rejected_on_real_graph` / `..._agent_face_never_generates_answer` / `..._missing_evidence_rejected` | 两参相等必抛；Agent 面一次 LLM 答案都不花 |
+| M2 | `test_m2_search_shape_on_real_graph` | 四个返回块（`answer_context` / `spill_refs` / `hits` / `trace`）都不缺席；命中项带 `origin` + `provenance` |
+| M2 | `test_m2_texts_equal_degrades_on_real_graph` | query 缺省 → 如实降级成 `human` + `reason=texts_equal`，不唏着骗 |
+| M2 | `test_m2_unlinked_chunks_stay_out_of_injection` | 真图上必然有「话题相似但实体无关」的块：留在 `hits` 里标 `linked=false`，不进注入也不进溢出清单 |
+| M2 | `test_m2_real_graph_injection_is_dominated_by_path_nodes` | 真图注入里 `[path]` 过半（1 锚 + 2 引用 → 10 行 path）——密度问题的根因，铉在这里 |
+| M2 | `test_m2_real_graph_overflow_lands_on_chunks` / `..._budget_truncated_is_overflow_not_drop` | 实体/关系刚好装下时，溢出全落在块上；记账要平 |
+| M2 | `test_m2_no_anchor_falls_back_honestly` | 离题文本：`vector_fallback` 或 `no_anchor` 两种都要说出来 |
+| M3 | `test_m3_spill_then_expand_roundtrip` | 溢出的引用能无状态取回（真图上全部命中）；`expand` 也带溯源 |
+| M3 | `test_m3_expand_reports_missing_with_reasons` / `..._truncates_and_caps` | 四类取不到都给原因；`max_tokens` 截断带 `…`；一次最多 20 条 |
+| M4 | `test_m4_real_nodes_are_extracted_and_resolve_docs` | 真图 80 节点全为 `extracted`、`unresolved=0`、来源文档 ≥ 2 篇 |
+| M4 | `test_m4_manual_and_mixed_marks_on_real_copy` | 在真图副本上打 1.5.6 / 1.5.7 两种手工痕迹 + 一条混合，分别得 `manual` / `manual` / `mixed` |
+| M4 | `test_m4_search_and_expand_carry_provenance` | 检索与取回两边的溯源不会各说一套 |
+| M5 | `test_m5_h1_on_real_names` / `..._h2_and_h3_on_real_names` | 80 个名字挂探针上：H1 探到两个锚、H2 从报错里探到实体、H3 从上下文里探到 |
+| M5 | `test_m5_offtopic_skips_and_gate_holds_on_real_graph` | 离题句 `no_entity` 不扣格；手动耗尽总闸后 `gate_exhausted`；H0 照样能查且 `exempt=True` |
+
 **现场组（本地跑，CI skip）** —— `test_live_real_workspace_end_to_end`：
 它在用例里自己把真库拷进 `tmp_path`（不碰原件），然后跑探针 → H1 → 离题 H3 → H0，
-断言：探针 ≥ 200 个名字、H1 命中且注入无裸名字、离题句不查、H0 豁免总闸。
+再手动跑一次 `memory.search`（小预算强制溢出）→ `memory.expand`（实体/关系/块都取一遍）→ 全图溯源。
+断言：探针 ≥ 200 个名字、H1 命中且注入无裸名字、离题句不查、H0 豁免总闸、
+溢出的引用全部取得回、260 个节点全为 `extracted` 且 `unresolved=0`。
 需要真库 + 本地 Ollama，两者缺一就 skip；`-m "not slow"` 也可以主动跳过。
+
+注意现场组把数据拷进 `<tmp>/ws/live/` 并设 `workspace="live"`——不是为了好看：
+LightRAG 的 KV 挂在进程级共享字典上（见下面 §10），不隔离的话跑完整套用例时
+块存储会是空的（图还能读，所以现象很诱人：图文对得上，块全 `missing`）。
 
 **夹具为什么脱敏**：夹具要进公开仓库，而真图里的描述是从我的设计文档抽出来的句子
 （含项目名、路线代号）。`scripts/capture_real_fixture.py` 默认把实体名与文本换成等长填充，
@@ -188,5 +215,32 @@ token 估算因此仍然可复算。要留原始副本用 `--raw`，但别提交
 
 - `tests/test_documents.py` 6 → 5 passed（删掉恒真的旧用例，加 `test_concurrent_upserts_do_not_interleave`）。
 - `tests/test_render.py` 新增 `test_hit_trace_path_node_attrs_come_from_graph`（真图那个裸名字缺陷的回归）。
-- `tests/test_real_graph.py` 新增 13 条离线回放用例 + 1 条现场用例。
-- 全量：**163 passed**（含现场用例，本机真库 260 实体 + Ollama）；CI 里现场用例 skip，报 162 passed / 1 skipped。
+- `tests/test_real_graph.py`：13 条链路回放 + **21 条 M1–M5 逐层回放** + 1 条现场用例。
+- `tests/test_rag_guard.py` 新增 3 条（同 workspace 冲突要 warning）。
+- 全量：**187 passed**（含现场用例，本机真库 260 实体 + Ollama）；CI 里现场用例 skip，报 186 passed / 1 skipped。
+
+## 10. 真图跑 M1–M5 发现的两件事（2026-11-06）
+
+小图（4~5 个节点、9 条注入）上这两件事都看不见，换了 260 实体的真图才露头：
+
+**① 注入的主体是路径中间节点**。`query=一个锚点`、`task` 点名两个实体时，命中 7 实体 / 6 关系，
+13 行注入刚好塞满 668 token——其中 `[path]` 占 10 行。三个锚点、无引用点更极端：12 行里 9 行 path，
+同时 4 条关系 + 8 块溢出 3296 token。中间节点只需要证明「这两个人连得上」，却和锚点抢同一份额度；
+块（chunk）基本进不了注入，所以 `reason=budget_truncated` 在真图上是**常态**，`degraded` 在那儿失去区分度。
+三条候选（拼接句去重 / 分段截断 / 按层分配预算）已入 [`backlog.md`](../backlog.md) 条目 18，
+建议先做「按层分配预算」：path 只留名字 + 类型，描述需要时用 `entity:` 取回——不丢信息。
+
+**② 同进程里两个实例、同 workspace，KV 存储静静地空**。现象：跑完整套 pytest 时，
+现场用例的 `memory.expand` 对所有 `chunk:` 引用报「块存储里没有这个 chunk」，
+而同一时刻图能读到 260 个节点。单独跑 `tests/test_real_graph.py` 却全绿——只跟用例顺序有关的东西，
+八成不是我们的 bug 而是别人的状态。
+
+根因：LightRAG 把 KV 数据挂在**进程级**共享字典 `_shared_dicts[workspace:namespace]` 上，
+「谁负责从磁盘加载」只是个全局初始化标志；先建的实例（`workspace=""`）把 `:text_chunks` 标成已加载并填了它那份，
+后指向真库的实例看到标志就不再读自己的 JSON → 块 0 条。独立探针复现：实例 A（空库）→ 实例 B（真库副本）
+→ B 的 `text_chunks` 0 条、按 id 取块 `None`；换唯一 `workspace` 后一切正常。GraphML 不受影响
+（每个实例自己读文件），这就是「图文对得上、块全没了」这副诡异现象的来源。
+
+处置：`graphkb/rag.py` 加 `_warn_if_workspace_shared()`——同 workspace、不同 `working_dir` 时 warning，
+把坑喊出来而不偷偷绕过；现场用例改用 `<tmp>/ws/live/` + `workspace="live"` 做隔离；
+根治方案（自动隔离 / 报上游 / 定死单库单进程）入 [`backlog.md`](../backlog.md) 条目 19。

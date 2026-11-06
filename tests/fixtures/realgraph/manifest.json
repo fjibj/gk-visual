@@ -27,5 +27,13 @@
    "anchor_text": "条目234 条目215",
    "evidence_text": "条目234跟条目215是什么关系？"
   }
- ]
+ ],
+ "chunks": {
+  "recorded": 13,
+  "docs": 4,
+  "file_paths": [
+   "unknown_source"
+  ],
+  "tokens": 13029
+ }
 }

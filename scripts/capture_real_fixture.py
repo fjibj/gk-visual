@@ -8,7 +8,8 @@
 录什么：
 · 一张裁剪过的 graphml（从真实图里按需 BFS 出来，保留 <SEP> 拼接的原始描述）；
 · 每个 case 的 `aquery_data` 原样返回 + `entities_vdb.query` 原样返回；
-· manifest.json（来源、时间、图规模、每个 case 的锚/证据文本）。
+· text_chunks.json：图上 `source_id` 引用的那几块原文（M3 的 chunk 取回、M4 的 chunk→文档反查都要它）；
+· manifest.json（来源、时间、图规模、块规模、每个 case 的锚/证据文本）。
 
 **默认脱敏**：这个仓库是公开的，真实图里是从我的设计文档抽出来的句子（含项目名、路线代号）。
 所以夹具落盘前会把实体名与文本换成等长的填充文本，只保留**结构特征**——
@@ -20,6 +21,9 @@
     python scripts/capture_real_fixture.py \
         --workspace "C:/Users/fjibj/cola/outputs/gk-probe/probe-data" \
         --out tests/fixtures/realgraph
+
+只想补块、不想再花 LLM 重跑检索时加 `--chunks-only`：它读**已有夹具**的图与检索返回，
+只去真库里把对应块的原文录下来（纯读，不调 LLM、不联网）。
 
 夹具重新录制后 `tests/test_real_graph.py` 会自动用新夹具；断言是结构性的（不锁具体分数），
 所以换一份真实语料也能跑。
@@ -45,6 +49,7 @@ from graphkb.config import load_config  # noqa: E402
 from graphkb.rag import init_rag  # noqa: E402
 
 GRAPH_FILE = "graph_chunk_entity_relation.graphml"
+CHUNKS_FILE = "kv_store_text_chunks.json"
 
 # 三个 case 各压一条通路：起手查（多锚点）、点名（单锚点 + 任务文本）
 CASES = [
@@ -163,6 +168,90 @@ def _jsonable(obj):
     return json.loads(json.dumps(obj, ensure_ascii=False, default=str))
 
 
+# ---------------------------------------------------------------- 块（text_chunks）
+
+
+def _sep_refs(value) -> list[str]:
+    return [p.strip() for p in str(value or "").split("<SEP>") if p.strip()]
+
+
+def _collect_chunk_ids(payload, acc: set[str] | None = None) -> set[str]:
+    """把图与检索返回里出现过的 chunk_id 全挖出来（图上的在 source_id 里，检索里的在 chunks 里）。"""
+    acc = set() if acc is None else acc
+    if isinstance(payload, list):
+        for x in payload:
+            _collect_chunk_ids(x, acc)
+    elif isinstance(payload, dict):
+        for key, value in payload.items():
+            if key == "chunk_id" and isinstance(value, str) and value:
+                acc.add(value)
+            else:
+                _collect_chunk_ids(value, acc)
+    return acc
+
+
+def _wanted_chunk_ids(graph: nx.Graph, payloads: dict) -> set[str]:
+    wanted: set[str] = set()
+    for _n, attrs in graph.nodes(data=True):
+        wanted.update(r for r in _sep_refs(attrs.get("source_id")) if r != "manual_creation")
+    for _u, _v, attrs in graph.edges(data=True):
+        wanted.update(r for r in _sep_refs(attrs.get("source_id")) if r != "manual_creation")
+    for payload in payloads.values():
+        for part in payload.values():
+            _collect_chunk_ids(part, wanted)
+    wanted.discard("manual_creation")
+    return wanted
+
+
+def _read_chunks(workspace: Path, wanted: set[str]) -> dict[str, dict]:
+    """从真库读那几块原文（只保留测试用得到的字段，其余时间戳/缓存列表一律不带）。"""
+    raw = json.loads((workspace / CHUNKS_FILE).read_text(encoding="utf-8"))
+    out: dict[str, dict] = {}
+    for cid in sorted(wanted):
+        row = raw.get(cid)
+        if not row:
+            continue
+        out[cid] = {
+            "content": str(row.get("content") or ""),
+            "tokens": row.get("tokens"),
+            "chunk_order_index": row.get("chunk_order_index"),
+            "full_doc_id": str(row.get("full_doc_id") or ""),
+            "file_path": str(row.get("file_path") or ""),
+        }
+    return out
+
+
+def _sanitize_chunks(chunks: dict[str, dict], raw: bool) -> dict[str, dict]:
+    if raw:
+        return chunks
+    out: dict[str, dict] = {}
+    for cid, row in chunks.items():
+        out[cid] = {**row, "content": _reskin(row["content"])}
+    return out
+
+
+def _assert_chunks_clean(chunks: dict[str, dict]) -> None:
+    """脱敏自检：块内容只许由填充词组成，混进一个真字就报错。"""
+    allowed = set(FILLER)
+    for cid, row in chunks.items():
+        bad = set(row["content"]) - allowed
+        if bad:
+            raise SystemExit(f"块 {cid} 里还有未脱敏内容：{''.join(sorted(bad))[:20]}")
+
+
+def _write_chunks(out: Path, chunks: dict[str, dict]) -> dict:
+    (out / "text_chunks.json").write_text(
+        json.dumps(chunks, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    docs = {r["full_doc_id"] for r in chunks.values() if r["full_doc_id"]}
+    return {
+        "recorded": len(chunks),
+        "docs": len(docs),
+        "file_paths": sorted({r["file_path"] for r in chunks.values()}),
+        "tokens": sum(int(r.get("tokens") or 0) for r in chunks.values()),
+    }
+
+
 def _trim(graph: nx.Graph, seeds: list[str], max_nodes: int) -> nx.Graph:
     """从种子节点 BFS 出一个小一点的图：保住真实结构（含中间节点、<SEP> 描述）。"""
     keep: list[str] = []
@@ -186,6 +275,32 @@ def _trim(graph: nx.Graph, seeds: list[str], max_nodes: int) -> nx.Graph:
     return graph.subgraph(keep).copy()
 
 
+def _chunks_only(src: Path, out: Path, *, raw: bool) -> int:
+    """只补块：读已有夹具（图 + 检索返回）→ 去真库取对应块 → 写 text_chunks.json。"""
+    graph_file = out / GRAPH_FILE
+    if not graph_file.is_file():
+        raise SystemExit(f"{out} 里没有夹具图，先跑一次完整录制")
+    graph = nx.read_graphml(str(graph_file))
+    payloads = {
+        p.name[len("case_") : -len(".retrieval.json")]: {
+            "retrieval": json.loads(p.read_text(encoding="utf-8"))
+        }
+        for p in sorted(out.glob("case_*.retrieval.json"))
+    }
+    wanted = _wanted_chunk_ids(graph, payloads)
+    chunks = _sanitize_chunks(_read_chunks(src, wanted), raw=raw)
+    if not raw:
+        _assert_chunks_clean(chunks)
+    stats = _write_chunks(out, chunks)
+    manifest_path = out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["chunks"] = stats
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(json.dumps(stats, ensure_ascii=False))
+    print(f"块已写入 {out}（{len(chunks)}/{len(wanted)} 条，raw={raw}）")
+    return 0
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description="录制真实图测试夹具")
     parser.add_argument("--workspace", required=True, help="真实 workspace（脚本自己拷一份，不碰原件）")
@@ -196,6 +311,11 @@ async def main() -> int:
         action="store_true",
         help="保留原始文本（只在本地用，别提交——仓库是公开的）",
     )
+    parser.add_argument(
+        "--chunks-only",
+        action="store_true",
+        help="只补 text_chunks.json（读已有夹具 + 真库块存储，不调 LLM、不重录检索）",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -205,6 +325,9 @@ async def main() -> int:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+
+    if args.chunks_only:
+        return _chunks_only(src, out, raw=args.raw)
 
     tmp = Path(tempfile.mkdtemp(prefix="gkb_capture_"))
     ws = tmp / "ws"
@@ -282,6 +405,18 @@ async def main() -> int:
                 for key in ("question", "anchor_text", "evidence_text"):
                     case[key] = _reskin_text(case[key], mapping)
 
+        # 块：图上 source_id 引用的 + 检索返回里带出来的，录原文（默认脱敏）
+        wanted = _wanted_chunk_ids(fixture_graph, payloads)
+        chunks = _read_chunks(src, wanted)
+        chunks = _sanitize_chunks(chunks, raw=args.raw)
+        if not args.raw:
+            _assert_chunks_clean(chunks)
+        chunk_stats = _write_chunks(out, chunks)
+        print(
+            f"  录好块 {chunk_stats['recorded']}/{len(wanted)}（{chunk_stats['docs']} 篇文档，"
+            f"{chunk_stats['tokens']} token）"
+        )
+
         for name, payload in payloads.items():
             (out / f"case_{name}.retrieval.json").write_text(
                 json.dumps(payload["retrieval"], ensure_ascii=False, separators=(",", ":")),
@@ -312,6 +447,7 @@ async def main() -> int:
                 "nodes_without_description": no_desc,
             },
             "top_k": cfg.retrieval.hit_top_k,
+            "chunks": chunk_stats,
             "cases": manifest_cases,
         }
         (out / "manifest.json").write_text(

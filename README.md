@@ -103,16 +103,20 @@ python -m graphkb.cli trigger plan "帮我整理张三的入职材料"    # 抬�
 ## 6. 验证
 
 ```bash
-python -m pytest -q                                   # 单元 + 真图回归（当前 163 passed，全程离线，LLM/embedding 走 mock）
+python -m pytest -q                                   # 单元 + 真图回归（当前 187 passed，全程离线，LLM/embedding 走 mock）
 python -m pytest -q -m "not slow"                      # 跳过需要真库 + Ollama 的现场用例（CI 里自动 skip）
 python holdout/evaluate.py slice-7-retrieval-visualization --version slice-7-v1
 python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slice-8-v1
 ```
 
-**真图回归**（`tests/test_real_graph.py`）：不只拿 4~5 个节点的玩具图测，而是用一张真图夹具跑完整链路（分层 → 注入 → 探针）。
-夹具在 `tests/fixtures/realgraph/`，由 `scripts/capture_real_fixture.py` 从真库录一份（graphml + `aquery_data` / `entities_vdb` 的原样返回）；
+**真图回归**（`tests/test_real_graph.py`）：不只拿 4~5 个节点的玩具图测，而是用一张真图夹具把 **M1–M5 逐层压一遍**——
+双文本判据（M1）、`memory.search` 的面与降级（M2）、Inline & Spill → `memory.expand` 闭环（M3）、
+溯源四态与块→文档反查（M4）、四钩子 + 总闸（M5）。
+夹具在 `tests/fixtures/realgraph/`，由 `scripts/capture_real_fixture.py` 从真库录一份：
+`graphml` + `aquery_data` / `entities_vdb` 的原样返回 + `text_chunks`（图上 `source_id` 引用的那几块原文）。
 默认**脱敏**——只保留结构（节点数、度数、`<SEP>` 分段与长度、带点号的方法名），文字换成等长填充，因为仓库是公开的。
-另外一条 `slow` 用例会在本地自动拷一份真库跑 H1 / 离题 H3 / H0，**不用手动搬数据**；CI 里没那张图，自动 skip。
+只想补块、不想重跑检索引擎时加 `--chunks-only`（纯读，零 LLM）。
+另外一条 `slow` 用例会在本地自动拷一份真库跑 H1 / 离题 H3 / H0 + `search`→`expand` + 全图溯源，**不用手动搬数据**；CI 里没那张图，自动 skip。
 
 holdout 是 IDSD 的「考卷区」：场景由 `expectations.md` 派生、不回看实现，构建期对代理不可见（见 `holdout/README.md` 与 `.claudeignore`）。判卷结果存档在 `holdout/results/<版本>/report.json`。
 
@@ -121,7 +125,7 @@ holdout 是 IDSD 的「考卷区」：场景由 `expectations.md` 派生、不�
 ```
 graphkb/
   config.py      # env -> Config（含 RetrievalConfig）
-  rag.py         # 按配置构建并初始化 LightRAG 实例
+  rag.py         # 按配置构建并初始化 LightRAG 实例（顺手喊出「同进程同 workspace」的坑）
   providers/     # llm/embedding 适配：anthropic | openai_compat | ollama | mock
   ingest.py      # 文档 -> 图（增量、实体对齐）
   documents.py   # 文档生命周期：列表 / 覆盖更新 / 删除后图收敛
@@ -159,6 +163,8 @@ data/            # 库本体（gitignore）
 - **溯源只到「有没有人碰过」**：`origin` 能分出抽取 / 人工 / 混合，但分不出「谁在什么时候改的」；也没有“抽取后又被人改回去了”这种历史（要真审计日志，不在个人底座阶段）。
 - **URL 抓取未做**：S8 只做了本地文件解析；网页抓取涉及 SSRF/超时/正文抽取，需单独切片。
 - **没有鉴权**：`serve` 只该绑 `127.0.0.1`，别指望它挡人。CI 只覆盖 pytest 与前端构建（`.github/workflows/ci.yml`），**不覆盖 holdout**——那要跑真模型，成本与稳定性都不适合放 CI。
+- **同进程里别开两个同 workspace 的库**：LightRAG 的 KV 存储挂在进程级共享字典（`_shared_dicts[workspace:namespace]`）上，"谁负责从磁盘加载"只是个全局标志。后果是第二个实例的 `text_chunks` / `full_docs` 会静静地为空（图还能读，因为 GraphML 是每实例自己读文件）——不报错，只是块全查不到。`graphkb/rag.py` 遇到这种冲突会 warning；要并行多个库就给不同 `workspace`（文件在 `<working_dir>/<workspace>/` 下）或拆进程。
+- **注入预算在真图上是瓶颈**：260 实体的真图上，一段话的命中往往就有 10~13 行注入，其中过半是 `[path]` 中间节点（`1 锚 + 2 引用点` → 10 行 path）。块（chunk）基本装不进 800 token，常以 `reason=budget_truncated` 溢出——那是溢出不是丢弃（引用都在 `spill_refs`），但也意味着 `degraded` 在真图上是常态，别当异常告警读。怎么压：见 [`idsd/backlog.md`](<idsd/backlog.md>) 条目 18。
 
 ## 10. Agent 记忆面（MCP，已实现）
 
