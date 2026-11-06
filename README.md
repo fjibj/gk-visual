@@ -141,7 +141,8 @@ data/            # 库本体（gitignore）
 - 总意图与硬约束：[`idsd/intents/overall/intent.md`](<idsd/intents/overall/intent.md>)（其中约束 1 锁死「图引擎复用 LightRAG」，所以本项目是 Python-only 后端；约束 6 是「规则预算 ≤ 1」，能靠结构判据解决的就不加关键词规则）。
 - 每个切片为什么做成这样：`idsd/checkpoints/`。
 - 当下明确不做的事（含理由）：[`idsd/backlog.md`](<idsd/backlog.md>)。
-- 进度：[`idsd/idsd-status.yaml`](<idsd/idsd-status.yaml>)（S1–S7 验收收官；S8「文档摄取增强」已实现并跑通 pytest 与 holdout，浏览器端的人工验收待做）。
+- 进度：[`idsd/idsd-status.yaml`](<idsd/idsd-status.yaml>)（切片维度：S1–S7 验收收官；S8「文档摄取增强」已实现并跑通 pytest 与 holdout，浏览器端的人工验收待做）。
+- 个人底座阶段（M0–M6，2026-11）的完成情况见 §13；过程记录在 `idsd/notes/m3-inline-spill.md`、`m4-provenance.md`、`m5-triggers.md`、`m6-end-to-end.md`。
 
 ## 9. 已知边界（诚实的局限）
 
@@ -231,3 +232,28 @@ python -m graphkb.cli trigger named "张三在哪工作" --gate 0          # H0�
 - LLM/embedding 密钥只放本地 `.env`（已 gitignore），不要提交、不要贴进文档。
 - `serve` 默认绑 `127.0.0.1`，别在公网机器上直接 `--host 0.0.0.0`——UI 没有任何鉴权。
 - `data/` 里是全库内容与向量，迁移/备份时按敏感数据对待。
+
+## 13. 端到端跑一遍（M6）
+
+一条命令把「干活 → 存记忆 → 下次想起 → 注入有预算」走完：
+
+```bash
+python scripts/demo_agent_memory.py --workspace data   # 只跑读侧，不花 LLM
+python scripts/demo_agent_memory.py --ingest           # 连写侧一起（真调一次抽取，几十秒）
+```
+
+它会跑这五步并打印每个事件的账：H1 起手查 → H2 卡壳查 → H3 回想查 → 离题 H3（探针不亮、不花预算）→ H0 点名；再把总闸耗尽，看自动钩子被拦、H0 照样能查。`--ingest` 额外演示：把一段会话记录写进图，然后用 H0 问回来，验证「上次学到的这次真能想起」。
+
+一次真实运行的账（2026-11-06，`data/` 那 17 个实体的小图）：
+
+| 步骤 | 锤 | 探到实体 | 查了吗 | 注入 token / 预算 | 总闸余 |
+| --- | --- | --- | --- | --- | --- |
+| ① 起手 H1 | 张三 北京 | 2 | 查 | 247 / 800 | 4 |
+| ② 埋坑 H2 | 张三 | 1 | 查 | 119 / 800 | 3 |
+| ③ 回想 H3 | 张三 | 1 | 查 | 119 / 800 | 2 |
+| ④ 离题 H3 | — | 0 | **不查** | — | 2 |
+| ⑤ 点名 H0 | 张三 | 1 | 查（不占总闸） | 119 / 800 | 2 |
+| ⑥ 总闸耗尽 | 张三 | 1 | **被拦** `gate_exhausted` | — | 0 |
+| ⑦ 被拦后点名 H0 | 张三 | 1 | 查（豁免） | 119 / 800 | 0 |
+
+写入闭环实测（临时库、真 LLM）：一段两句话的复盘 → 7 实体/6 关系；再用 H0 问回去，注入 159 token 且包含刚学到的「社保」——探针重载后 H1 一次就探到 4 个实体。
