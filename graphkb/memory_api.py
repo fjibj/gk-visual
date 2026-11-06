@@ -22,12 +22,24 @@ from .config import Config, RetrievalConfig
 from .documents import slugify, upsert_document
 from .query import query
 
+try:  # 只是为把 LightRAG 的多段描述拆开显示；拿不到就按约定值兜底
+    from lightrag.utils import GRAPH_FIELD_SEP
+except Exception:  # noqa: BLE001
+    GRAPH_FIELD_SEP = "<SEP>"
+
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1"
 
 DEFAULT_MAX_CONTEXT_TOKENS = 800
-"""answer_context 的默认预算（token）。断崖式调大之前先看 M3 的 Inline&Spill。"""
+"""answer_context 的默认预算（token）。断崖式调大之前先看 Inline&Spill 的溢出清单。"""
+
+DESC_CLIP = 240  # 实体/关系描述进上下文时最多保留多少字（全文靠 spill_ref 取回）
+CHUNK_CLIP = 400  # 块内容进上下文时最多保留多少字
+SPILL_SUMMARY_CHARS = 60  # spill_ref 的一行摘要多少字
+
+MAX_EXPAND_ITEMS = 20  # memory.expand 一次最多取回几条，防止被当批量导出器用
+DEFAULT_EXPAND_MAX_TOKENS = 2000  # 单条取回内容的默认预算
 
 INGEST_SOURCES = frozenset({"doc", "session", "note"})
 MODES = frozenset({"agent", "human", "auto"})
@@ -106,8 +118,102 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _plain(text: str) -> str:
+    """把 LightRAG 用 <SEP> 拼起来的多段描述抖开成可读文本（去空、去重、保序）。"""
+    parts: list[str] = []
+    for p in str(text or "").split(GRAPH_FIELD_SEP):
+        p = " ".join(p.split())
+        if p and p not in parts:
+            parts.append(p)
+    return "；".join(parts)
+
+
 def _layer_rank(layer: str | None) -> int:
     return {"anchor": 0, "cited": 1, "path": 2, "direct": 0}.get(layer or "", 9)
+
+
+# ---------------------------------------------------------------- Inline & Spill
+
+
+def entity_ref(name: str) -> str:
+    return f"entity:{name}"
+
+
+def relation_ref(src: str, tgt: str) -> str:
+    return f"relation:{src}->{tgt}"
+
+
+def chunk_ref(chunk_id: str) -> str:
+    return f"chunk:{chunk_id}"
+
+
+@dataclass
+class Candidate:
+    """一条可注入的内容。装得下就 Inline，装不下就变成 spill_ref 等着被取。"""
+
+    kind: str  # entity | relation | chunk
+    ref: str
+    line: str  # 进 answer_context 的那一行
+    summary: str  # 进 spill_refs 的一行摘要（不占注入预算）
+    tokens: int  # 取回它要花的预算，让调用方自己决定值不值
+
+
+@dataclass
+class ContextBundle:
+    text: str = ""
+    used_tokens: int = 0
+    inline_count: int = 0
+    spill_refs: list[dict] = field(default_factory=list)
+    spilled_tokens: int = 0
+
+    def budget_trace(self) -> dict:
+        return {
+            "context_used": self.used_tokens,
+            "context_inline": self.inline_count,
+            "context_spilled": len(self.spill_refs),
+            "spilled_tokens": self.spilled_tokens,
+        }
+
+
+def _entity_candidate(e: dict) -> Candidate | None:
+    name = str(e.get("name") or "")
+    if not name:
+        return None
+    layer = e.get("layer") or "entity"
+    line = f"[{layer}] {name}"
+    if e.get("type"):
+        line += f"（{e['type']}）"
+    desc = _plain(e.get("description"))
+    if desc:
+        line += f"：{_clip(desc, DESC_CLIP)}"
+    summary = name + (f"（{e['type']}）" if e.get("type") else "")
+    if desc:
+        summary += f"：{_clip(desc, SPILL_SUMMARY_CHARS)}"
+    return Candidate("entity", entity_ref(name), line, summary, estimate_tokens(line) + 1)
+
+
+def _relation_candidate(r: dict) -> Candidate | None:
+    src, tgt = str(r.get("src") or ""), str(r.get("tgt") or "")
+    if not src or not tgt:
+        return None
+    layer = r.get("layer") or "edge"
+    desc = _plain(r.get("description"))
+    line = f"[{layer}] {src} -> {tgt}"
+    if r.get("keywords"):
+        line += f"［{_plain(r.get('keywords'))}］"
+    if desc:
+        line += f"：{_clip(desc, DESC_CLIP)}"
+    summary = f"{src} -> {tgt}" + (f"：{_clip(desc, SPILL_SUMMARY_CHARS)}" if desc else "")
+    return Candidate("relation", relation_ref(src, tgt), line, summary, estimate_tokens(line) + 1)
+
+
+def _chunk_candidate(c: dict) -> Candidate | None:
+    cid = str(c.get("chunk_id") or "")
+    content = _clip(c.get("content") or "", CHUNK_CLIP)
+    if not cid or not content:
+        return None
+    line = f"[chunk] {content}"
+    return Candidate("chunk", chunk_ref(cid), line, _clip(content, SPILL_SUMMARY_CHARS), estimate_tokens(line) + 1)
 
 
 def build_answer_context(
@@ -115,47 +221,65 @@ def build_answer_context(
     relationships: list[dict],
     chunks: list[dict],
     max_tokens: int,
-) -> tuple[str, int, int]:
-    """把命中拼成「唯一会被注入 agent 上下文」的纯文本（零 LLM、可复算）。
+) -> ContextBundle:
+    """Inline & Spill：预算内的进 `answer_context`，超出的变成 `spill_refs`。
 
-    返回 (文本, 用掉的 token, 因预算被丢弃的条数)。超预算的条目**不静默丢**：
-    计数会进 `budget_used.context_dropped`，并让 `reason=budget_truncated`。
+    两条规矩：
+    · 注入内容只从这里出（零 LLM、可复算、确定性顺序：anchor → cited → path → 关系 → 块）；
+    · **溢出不是丢弃**——预算是「展示预算」，不是「语义筛」。装不下的保留引用 + 一行摘要，
+      调用方需要时再取（这是 claude-mem 那种「全塞进 prompt」与「默默丢掉」之外的第三条路）。
     """
-    items: list[str] = []
+    cands: list[Candidate] = []
     for e in sorted(entities, key=lambda x: (_layer_rank(x.get("layer")), str(x.get("name") or ""))):
-        kind = e.get("layer") or "entity"
-        line = f"[{kind}] {e.get('name')}"
-        if e.get("type"):
-            line += f"（{e['type']}）"
-        desc = _clip(e.get("description") or "", 240)
-        items.append(line + (f"：{desc}" if desc else ""))
-
+        c = _entity_candidate(e)
+        if c:
+            cands.append(c)
     for r in sorted(relationships, key=lambda x: _layer_rank(x.get("layer"))):
-        kind = r.get("layer") or "edge"
-        desc = _clip(r.get("description") or "", 240)
-        items.append(
-            f"[{kind}] {r.get('src')} -> {r.get('tgt')}" + (f"：{desc}" if desc else "")
-        )
+        c = _relation_candidate(r)
+        if c:
+            cands.append(c)
+    for raw in chunks:
+        c = _chunk_candidate(raw)
+        if c:
+            cands.append(c)
 
-    for c in chunks[:3]:
-        content = _clip(c.get("content") or "", 400)
-        if content:
-            items.append(f"[chunk] {content}")
-
-    kept: list[str] = []
-    used = 0
-    dropped = 0
-    for line in items:
-        cost = estimate_tokens(line) + 1
-        if used + cost > max_tokens:
-            dropped += 1
+    bundle = ContextBundle()
+    seen: set[str] = set()
+    lines: list[str] = []
+    for c in cands:
+        if c.ref in seen:  # 同一引用只留一条（路径实体常同时出现在实体表与关系表里）
             continue
-        kept.append(line)
-        used += cost
-    return "\n".join(kept), used, dropped
+        seen.add(c.ref)
+        if bundle.used_tokens + c.tokens <= max_tokens:
+            lines.append(c.line)
+            bundle.used_tokens += c.tokens
+            bundle.inline_count += 1
+        else:
+            bundle.spill_refs.append(
+                {"ref": c.ref, "kind": c.kind, "summary": c.summary, "tokens": c.tokens}
+            )
+            bundle.spilled_tokens += c.tokens
+    bundle.text = "\n".join(lines)
+    return bundle
 
 
 # ---------------------------------------------------------------- 写入任务
+
+
+def _entity_text(name: str, node: dict) -> str:
+    etype = node.get("entity_type") or node.get("type") or ""
+    head = name + (f"（{etype}）" if etype else "")
+    desc = _plain(node.get("description"))
+    return head + (f"：{desc}" if desc else "")
+
+
+def _relation_text(src: str, tgt: str, edge: dict) -> str:
+    head = f"{src} -> {tgt}"
+    keywords = _plain(edge.get("keywords"))
+    if keywords:
+        head += f"［{keywords}］"
+    desc = _plain(edge.get("description"))
+    return head + (f"：{desc}" if desc else "")
 
 
 @dataclass
@@ -186,7 +310,10 @@ class Job:
 
 
 class MemoryTools:
-    """`memory.*` 三个工具的落点。构造即绑定 workspace（由 MCP server 启动时决定）。"""
+    """`memory.*` 四个工具的落点（search / expand / ingest / ingest_status）。
+
+    构造即绑定 workspace（由 MCP server 启动时决定）。
+    """
 
     def __init__(self, cfg: Config, rag):
         self.cfg = cfg
@@ -266,18 +393,18 @@ class MemoryTools:
         chunks = list(trace.get("chunks", []))
 
         if result.trace_hit:
-            answer_context, used_tokens, dropped = build_answer_context(
-                entities, relationships, chunks, b.max_context_tokens
-            )
+            bundle = build_answer_context(entities, relationships, chunks, b.max_context_tokens)
         else:
-            answer_context, used_tokens, dropped = "", 0, 0
+            bundle = ContextBundle()
             warnings.append("检索没有命中任何实体/关系：answer_context 为空，不会编造内容。")
 
-        if dropped:
+        if bundle.spill_refs:
             reasons.append("budget_truncated")
             warnings.append(
-                f"answer_context 超出 {b.max_context_tokens} token 预算，丢弃 {dropped} 条；"
-                "完整内容仍在 hits/trace 里（看得见 ≠ 塞进去）。"
+                f"answer_context 只装下 {bundle.inline_count} 条 / {bundle.used_tokens} token"
+                f"（预算 {b.max_context_tokens}）；另有 {len(bundle.spill_refs)} 条"
+                f"（≈{bundle.spilled_tokens} token）没进注入，已放进 spill_refs，"
+                "需要时用 memory.expand 取回——是溢出，不是丢弃。"
             )
 
         # evidence_empty：锚点有、证据一条都没有 —— 分层事实上只停在半路。
@@ -298,7 +425,8 @@ class MemoryTools:
             logger.info("memory.search caller=%s mode=%s reason=%s", caller, used_mode, reason)
 
         return {
-            "answer_context": answer_context,
+            "answer_context": bundle.text,
+            "spill_refs": bundle.spill_refs,
             "hits": {
                 "entities": entities,
                 "relationships": relationships,
@@ -315,8 +443,7 @@ class MemoryTools:
                 "evidence_empty": evidence_empty,
                 "budget_used": {
                     **b.as_dict(),
-                    "context_used": used_tokens,
-                    "context_dropped": dropped,
+                    **bundle.budget_trace(),
                 },
                 "retrieved": trace.get("retrieved"),
             },
@@ -326,6 +453,74 @@ class MemoryTools:
             "mode": used_mode,
             "warnings": warnings,
         }
+
+    # ---- memory.expand ----
+
+    async def expand(self, refs, max_tokens: int = DEFAULT_EXPAND_MAX_TOKENS) -> dict:
+        """把 `spill_refs` 里的引用取回原文。
+
+        引用是**无状态的**：`entity:张三` / `relation:张三->字节跳动` / `chunk:c123`
+        直接指向图与块存储，不靠进程内缓存。所以 server 重启、换一次会话，引用照样能取——
+        这比在内存里存一份 spill 内容实在（代价是只适用于“还在库里”的东西，被删就取不到，
+        此时如实报 missing 而不是编）。
+        """
+        if isinstance(refs, str):
+            refs = [refs]
+        if not refs:
+            raise ValueError("refs 不能为空")
+        if len(refs) > MAX_EXPAND_ITEMS:
+            raise ValueError(f"一次最多取 {MAX_EXPAND_ITEMS} 条，收到 {len(refs)}")
+        cap = _int(max_tokens, DEFAULT_EXPAND_MAX_TOKENS)
+        if cap < 1:
+            raise ValueError(f"max_tokens 必须 ≥1，收到 {cap}")
+
+        items: list[dict] = []
+        missing: list[dict] = []
+        for raw in refs:
+            ref = str(raw).strip()
+            kind, _, key = ref.partition(":")
+            text: str | None = None
+            reason: str | None = None
+            try:
+                if kind == "entity":
+                    node = await self.rag.chunk_entity_relation_graph.get_node(key)
+                    if node:
+                        text = _entity_text(key, node)
+                    else:
+                        reason = "图里没有这个实体（可能已删除或改名）"
+                elif kind == "relation":
+                    src, sep, tgt = key.partition("->")
+                    if not sep:
+                        reason = "关系引用应形如 relation:A->B"
+                    else:
+                        edge = await self.rag.chunk_entity_relation_graph.get_edge(src, tgt)
+                        if edge:
+                            text = _relation_text(src, tgt, edge)
+                        else:
+                            reason = "图里没有这条关系（可能两端改名或边已删）"
+                elif kind == "chunk":
+                    row = await self.rag.text_chunks.get_by_id(key)
+                    if row:
+                        text = str(row.get("content") or "")
+                    else:
+                        reason = "块存储里没有这个 chunk（所属文档可能被覆盖或删除）"
+                else:
+                    reason = "未知引用类型（只认 entity: / relation: / chunk:）"
+            except Exception as exc:  # noqa: BLE001 — 取不到就说取不到，不矞着调用方
+                reason = f"取回失败：{type(exc).__name__}: {exc}"
+
+            if text is None:
+                missing.append({"ref": ref, "reason": reason or "取不到"})
+                continue
+            tokens = estimate_tokens(text)
+            truncated = tokens > cap
+            if truncated:
+                keep = max(1, int(len(text) * cap / max(tokens, 1)))
+                text = text[:keep] + "…"
+            items.append(
+                {"ref": ref, "kind": kind, "text": text, "tokens": tokens, "truncated": truncated}
+            )
+        return {"items": items, "missing": missing, "version": API_VERSION}
 
     # ---- memory.ingest ----
 

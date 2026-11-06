@@ -86,7 +86,9 @@ def build_server():
         instructions=(
             "gk-visual 的 Agent 记忆面。"
             "memory.search 检索：返回预算内的 answer_context（唯一建议注入上下文的内容）+ "
-            "hits/trace（只用于审计与展示，别塞进 prompt）+ degraded/reason（据此决定信多少）。"
+            "spill_refs（超预算、没注入但可取回）+ hits/trace（只用于审计与展示，别塞进 prompt）+ "
+            "degraded/reason（据此决定信多少）。"
+            "memory.expand 把 spill_refs 里的引用取回原文。"
             "memory.ingest 写入：默认异步，回 job_id，用 memory.ingest_status 查进度。"
             "scope 在 server 启动时按 workspace 绑定，参数里没有团队/群/域。"
         ),
@@ -114,6 +116,21 @@ def build_server():
         - caller         仅记录，用于审计
         """
         return await _tools(ctx).search(context=context, budget=budget, mode=mode, caller=caller)
+
+    @app.tool(name="memory.expand")
+    async def memory_expand(
+        ctx: Context,
+        refs: list[str],
+        max_tokens: int = 2000,
+    ) -> dict:
+        """把 `spill_refs` 里的引用取回原文（无状态：重启也能取）。
+
+        - refs       形如 entity:张三 / relation:张三->字节跳动 / chunk:c123，一次最多 20 条
+        - max_tokens 单条内容的预算，超了标记 truncated 而不是静默截断不告知
+
+        取不到的引用进 missing（带原因），不会编一个内容回来。
+        """
+        return await _tools(ctx).expand(refs=refs, max_tokens=max_tokens)
 
     @app.tool(name="memory.ingest")
     async def memory_ingest(

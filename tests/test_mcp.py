@@ -21,13 +21,13 @@ from graphkb.memory_api import MemoryTools, estimate_tokens, resolve_budget
 class _FakeGraph:
     def __init__(self, nodes=None, edges=None):
         self.nodes = [
-            {"entity_id": "张三", "source_id": "chunk-1"},
-            {"entity_id": "字节跳动", "source_id": "chunk-1"},
-            {"entity_id": "北京", "source_id": "chunk-1"},
+            {"entity_id": "张三", "entity_type": "person", "description": "张三是一名工程师", "source_id": "chunk-1"},
+            {"entity_id": "字节跳动", "entity_type": "organization", "description": "一家公司", "source_id": "chunk-1"},
+            {"entity_id": "北京", "entity_type": "location", "description": "城市", "source_id": "chunk-1"},
         ] if nodes is None else nodes
         self.edges = [
-            {"source": "张三", "target": "字节跳动"},
-            {"source": "北京", "target": "字节跳动"},
+            {"source": "张三", "target": "字节跳动", "description": "任职", "keywords": "任职"},
+            {"source": "北京", "target": "字节跳动", "description": "总部位于", "keywords": "总部"},
         ] if edges is None else edges
 
     async def get_all_nodes(self):
@@ -35,6 +35,36 @@ class _FakeGraph:
 
     async def get_all_edges(self):
         return self.edges
+
+    # --- memory.expand 用：按名字取单点/单边 ---
+    def _node_map(self):
+        out = {}
+        for n in self.nodes:
+            name = str(n.get("entity_id") or n.get("id") or "")
+            out[name] = n
+        return out
+
+    async def get_node(self, node_id):
+        return self._node_map().get(str(node_id))
+
+    async def get_edge(self, src, tgt):
+        for e in self.edges:
+            if str(e.get("source")) == str(src) and str(e.get("target")) == str(tgt):
+                return e
+            if str(e.get("source")) == str(tgt) and str(e.get("target")) == str(src):
+                return e
+        return None
+
+
+class _FakeTextChunks:
+    def __init__(self, rows=None):
+        self.rows = rows or {
+            "c1": {"content": "张三在字节跳动工作，常驻北京。"},
+            "chunk-1": {"content": "张三在北京的字节跳动上班。"},
+        }
+
+    async def get_by_id(self, chunk_id):
+        return self.rows.get(str(chunk_id))
 
 
 class _FakeVdb:
@@ -66,6 +96,7 @@ class _FakeRag:
         self.chunk_entity_relation_graph = _FakeGraph()
         self.entities_vdb = _FakeVdb(scores=scores, boom=vdb_boom)
         self.doc_status = _FakeDocStatus(self.docs)
+        self.text_chunks = _FakeTextChunks()
 
     async def aquery_data(self, question, param):
         return {
@@ -190,10 +221,13 @@ def test_search_budget_passthrough():
     assert used["max_paths"] == 3
     assert used["context_tokens"] == 500
     assert used["context_used"] > 0
-    assert used["context_dropped"] == 0
+    assert used["context_inline"] > 0
+    assert used["context_spilled"] == 0
+    assert out["spill_refs"] == []
 
 
 def test_search_budget_truncation_is_reported_not_silent():
+    """预算装不下：不静默丢，全部进 spill_refs，并回 reason=budget_truncated。"""
     tools, _ = _tools()
     out = asyncio.run(
         tools.search(
@@ -203,9 +237,10 @@ def test_search_budget_truncation_is_reported_not_silent():
     )
     assert out["degraded"] is True
     assert out["reason"] == "budget_truncated"
-    assert out["trace"]["budget_used"]["context_dropped"] > 0
+    assert out["trace"]["budget_used"]["context_spilled"] > 0
     assert out["answer_context"] == ""
-    assert any("预算" in w for w in out["warnings"])
+    assert out["spill_refs"], "溢出必须变成可取回的引用，而不是丢掉"
+    assert any("memory.expand" in w for w in out["warnings"])
 
 
 def test_search_bad_budget_rejected():
@@ -347,20 +382,136 @@ def test_resolve_budget_defaults_come_from_config():
     assert b.as_dict()["context_tokens"] == 800
 
 
+# ---------------------------------------------------------------- M3：Inline & Spill
+
+
+def test_budget_boundary_exact_fit_vs_one_under():
+    """刚好装下 vs 少 1 个 token：边界两侧行为必须可区分且可预测。"""
+    tools, _ = _tools()
+    args = {"query": "张三在哪工作", "task": "张三在字节跳动上班，常驻北京"}
+
+    roomy = asyncio.run(tools.search(args, budget={"max_context_tokens": 10_000}))
+    need = roomy["trace"]["budget_used"]["context_used"]
+    assert need > 1 and roomy["spill_refs"] == []
+
+    exact = asyncio.run(tools.search(args, budget={"max_context_tokens": need}))
+    assert exact["spill_refs"] == [], "预算恰好等于需求时不该溢出"
+    assert exact["trace"]["budget_used"]["context_used"] == need
+
+    tight = asyncio.run(tools.search(args, budget={"max_context_tokens": need - 1}))
+    assert tight["spill_refs"], "少 1 个 token 就该有内容被 spill 出去"
+    assert tight["reason"] == "budget_truncated"
+    assert tight["trace"]["budget_used"]["context_spilled"] == len(tight["spill_refs"])
+
+
+def test_spill_refs_are_addressable_and_carry_cost():
+    tools, _ = _tools()
+    out = asyncio.run(
+        tools.search(
+            {"query": "张三在哪工作", "task": "张三在字节跳动上班，常驻北京"},
+            budget={"max_context_tokens": 12},
+        )
+    )
+    assert out["spill_refs"]
+    for ref in out["spill_refs"]:
+        assert set(ref) == {"ref", "kind", "summary", "tokens"}
+        assert ref["kind"] in {"entity", "relation", "chunk"}
+        assert ref["ref"].startswith(("entity:", "relation:", "chunk:"))
+        assert ref["summary"] and ref["tokens"] > 0
+    # 溢出内容不应“同时”留在 answer_context 里
+    for ref in out["spill_refs"]:
+        if ref["kind"] == "entity":
+            assert f"[anchor] {ref['ref'].split(':', 1)[1]}" not in out["answer_context"]
+
+
+def test_search_then_expand_roundtrip():
+    """冒烟场景：预算卡死后取回一条 spill_ref，内容真的还在（引用无状态，可解析）。"""
+    tools, _ = _tools()
+    out = asyncio.run(
+        tools.search(
+            {"query": "张三在哪工作", "task": "张三在字节跳动上班"},
+            budget={"max_context_tokens": 1},
+        )
+    )
+    refs = [r["ref"] for r in out["spill_refs"]]
+    assert refs
+    got = asyncio.run(tools.expand(refs))
+    assert not got["missing"]
+    assert len(got["items"]) == len(refs)
+    for item in got["items"]:
+        assert item["text"].strip()
+        assert item["truncated"] is False
+
+
+def test_expand_entity_relation_chunk():
+    tools, _ = _tools()
+    got = asyncio.run(
+        tools.expand(["entity:张三", "relation:张三->字节跳动", "chunk:c1"])
+    )
+    assert got["missing"] == []
+    by_kind = {i["kind"]: i["text"] for i in got["items"]}
+    assert "张三" in by_kind["entity"] and "工程师" in by_kind["entity"]
+    assert "->" in by_kind["relation"]
+    assert "字节跳动" in by_kind["chunk"]
+
+
+def test_expand_reports_missing_instead_of_fabricating():
+    tools, _ = _tools()
+    got = asyncio.run(
+        tools.expand(["entity:不存在的人", "chunk:nope", "planet:Mars", "relation:无箭头"])
+    )
+    assert got["items"] == []
+    reasons = {m["ref"]: m["reason"] for m in got["missing"]}
+    assert "没有这个实体" in reasons["entity:不存在的人"]
+    assert "chunk" in reasons["chunk:nope"]
+    assert "未知引用类型" in reasons["planet:Mars"]
+    assert "relation:A->B" in reasons["relation:无箭头"]
+
+
+def test_expand_validates_inputs():
+    tools, _ = _tools()
+    with pytest.raises(ValueError, match="不能为空"):
+        asyncio.run(tools.expand([]))
+    with pytest.raises(ValueError, match="最多取"):
+        asyncio.run(tools.expand([f"entity:e{i}" for i in range(21)]))
+    with pytest.raises(ValueError, match="max_tokens"):
+        asyncio.run(tools.expand(["entity:张三"], max_tokens=0))
+
+
+def test_expand_truncates_but_says_so():
+    tools, _ = _tools()
+    got = asyncio.run(tools.expand(["entity:张三"], max_tokens=1))
+    item = got["items"][0]
+    assert item["truncated"] is True
+    assert item["tokens"] > 1
+    assert item["text"].endswith("…")
+
+
+def test_descriptions_are_flattened_for_reading():
+    """LightRAG 用 <SEP> 拼多段描述，直出就是天书，取回时要抖平。"""
+    tools, rag = _tools()
+    rag.chunk_entity_relation_graph.nodes[0]["description"] = "一个人<SEP>张三是一名工程师"
+    got = asyncio.run(tools.expand(["entity:张三"]))
+    text = got["items"][0]["text"]
+    assert "<SEP>" not in text
+    assert "一个人" in text and "工程师" in text
+
+
 # ---------------------------------------------------------------- MCP 适配器接线
 
 
-def test_mcp_server_registers_three_tools():
+def test_mcp_server_registers_four_tools():
     pytest.importorskip("mcp", reason="MCP extra 没装：pip install -e \".[dev,mcp]\"")
     from graphkb.mcp_server import build_server
 
     app = build_server()
     tools = {t.name: t for t in app._tool_manager.list_tools()}
-    assert set(tools) == {"memory.search", "memory.ingest", "memory.ingest_status"}
+    assert set(tools) == {"memory.search", "memory.expand", "memory.ingest", "memory.ingest_status"}
     # Context 是注入参数，不能出现在工具的入参 schema 里
     search_params = tools["memory.search"].parameters
     assert "context" in search_params["properties"]
     assert "ctx" not in search_params["properties"]
+    assert "refs" in tools["memory.expand"].parameters["properties"]
 
 
 def test_pinned_sdk_still_speaks_2025_11_25():
