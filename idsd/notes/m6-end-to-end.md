@@ -106,6 +106,43 @@ AssertionError: [('delete','笔记A'),('delete','笔记B'),('insert',['笔记A']
 表现出来是「刚写完就忘了」。这条不是 demo 的细节，是 harness 必须记住的一条：
 **写侧成功后要重载探针**，否则新记忆对自动钩子不可见（H0 不受影响，它不靠探针）。
 
+## 5. 换真图跑一遍（探针 B 那 260 个实体）
+
+小图（`data/`，17 实体）只能证明「机制对」，证明不了「真库能不能用」。
+把探针 B 灌的那张真图（`C:\Users\fjibj\cola\outputs\gk-probe\probe-data`，
+260 实体 / 371 关系 / 24 个连通分量）拷一份出来跑，才是压边界：
+
+```bash
+python scripts/demo_agent_memory.py --workspace <复制的库> --preset real
+```
+
+结果（同一个 demo，只换库和演示文本）：
+
+| | 小图 17 实体 | 真图 260 实体 |
+| --- | --- | --- |
+| 探针载入 | 17 个名字 | 260 个名字 |
+| H1 探到实体 | 2 | 4（触发器 / 无感记忆 / memory.search / harness） |
+| 注入 token | 247 / 800 | **797 / 800** |
+| inline 条数 | 5 | 9 |
+| spill | 0 | **41 条 / 4380 token** |
+| 离题句 | 探不到，不查 | 探不到，不查 |
+
+**真图上立刻暴露一个缺陷**：注入里出现 `[path] MVP` 这种**裸名字段**。
+原因是 `_hit_trace` 给命中项拼属性时只从「向量召回的上下文」里找同名实体，
+而路径中间节点（多跳里被串起来的那种）往往不在召回集里 → 类型和描述全是 `None`。
+小图上路径都是直连（一跳到头），没有中间节点，所以一直没露。
+
+已修：`_hit_trace` 顺带读一次全图节点，按名字补 `type` / `description`
+（向量召回那份若更全则以它为准）。反证做过：把回图取的那行改成 `attrs = {}`，
+新用例立刻红（`assert None == 'event'`）。修完同一句 H1 变成 
+`[path] MVP（event）：最小可行产品阶段……`。
+
+**剩下的问题（策略层，未改）**：800 token 在真图上只装得下 9 条，41 条溢出。
+根因不是预算小，而是**密度低**——每条描述是 LightRAG 把多份文档里的同类陈述用 `<SEP>`
+拼起来的近重复句（如 `memory.search` 一段 161 token，里面三段都在说「入参 context 和 budget」）。
+可选方向：拼句去重、按段截断而不是按总长截断、或把 800 按层分配（anchor 占大头、path 只留一句）。
+这属于注入策略，不是 bug，没动。
+
 ## 6. 边界
 
 - **单进程**：锁只在进程内有效。多进程/多机写同一 workspace 需要文件锁，未做。
@@ -115,7 +152,8 @@ AssertionError: [('delete','笔记A'),('delete','笔记B'),('insert',['笔记A']
   `ingest` 的返回里有 `entities`，harness 可以增量 `probe.replace(...)`，也可以整体 `refresh`。
 - **demo 依赖真库内容**：①–⑦ 的 token 数字取决于 `data/` 里有什么，换库就不再一样。
 
-## 7. 测试
+## 8. 测试
 
 - `tests/test_documents.py` 6 → 5 passed（删掉恒真的旧用例，加 `test_concurrent_upserts_do_not_interleave`）。
-- 全量 `pytest -q`：**148 passed**（本机 lightrag 1.5.7，与 CI 同版）。
+- `tests/test_render.py` 新增 `test_hit_trace_path_node_attrs_come_from_graph`（真图那个裸名字缺陷的回归）。
+- 全量 `pytest -q`：**149 passed**（本机 lightrag 1.5.7，与 CI 同版）。

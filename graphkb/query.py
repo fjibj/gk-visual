@@ -271,6 +271,21 @@ async def _hit_trace(
             )
     except Exception:
         pass
+
+    # 节点属性（类型 / 描述）：路径上的中间节点往往不在向量召回的上下文里，
+    # 不回图取，注入里就只剩一个裸名字（大图上到处是「[path] MVP」这种空段），还白占预算。
+    node_attrs: dict[str, dict] = {}
+    try:
+        for n in await rag.chunk_entity_relation_graph.get_all_nodes():
+            name = str(n.get("entity_id") or n.get("id") or "")
+            if name:
+                node_attrs[name] = {
+                    "type": n.get("entity_type") or n.get("type") or None,
+                    "description": n.get("description") or None,
+                }
+    except Exception:
+        pass
+
     adj = _undirected_adjacency([(str(r.get("src") or ""), str(r.get("tgt") or "")) for r in rel_by_key.values()])
 
     hit_layers = _layers_shell(anchor_mode, unmatched, budget=b)
@@ -330,9 +345,21 @@ async def _hit_trace(
             )
 
     by_name = {str(e.get("name")): e for e in full_entities}
+
+    def _attrs(name: str) -> dict:
+        """节点属性：先拿图上的真值，再用向量召回的那份覆盖（它可能有更全的描述）。"""
+        attrs = dict(node_attrs.get(name) or {})
+        got = by_name.get(name) or {}
+        for key in ("type", "description"):
+            if got.get(key):
+                attrs[key] = got[key]
+        attrs.setdefault("type", None)
+        attrs.setdefault("description", None)
+        return attrs
+
     hit_entities = [
         {
-            **by_name.get(n, {"name": n, "type": None, "description": None}),
+            **_attrs(n),
             "name": n,
             "score": score_by_name.get(n),
             "layer": node_layer[n],
