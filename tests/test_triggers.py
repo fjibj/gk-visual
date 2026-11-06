@@ -154,20 +154,41 @@ def test_h1_fires_with_entity_anchor():
     assert out.event.gate_left == AUTONOMOUS_LIMIT - 1
 
 
-def test_h1_without_entity_still_queries_with_short_anchor():
-    """H1 是状态触发（Plan 入口），没有实体也要查——锚点退化成任务首句。"""
-    engine, search = _engine()
+def test_h1_without_entity_skips_and_spends_no_gate():
+    """H1 探不到实体就不查：否则 query==task → texts_equal 退化 → 白花一次 LLM 生成答案。"""
+    gate = SessionGate(5)
+    engine, search = _engine(gate=gate)
     task = "把上周的会议记录整理成一份周报。语气要正式。"
     out = asyncio.run(engine.on_plan(task))
-    assert out.event.queried is True
+    assert out.event.queried is False
+    assert out.event.skipped == "no_entity"
     assert out.event.entities == []
-    assert out.event.anchor == "把上周的会议记录整理成一份周报。"
-    assert search.calls[0][0]["query"] == out.event.anchor
+    assert out.event.anchor == "把上周的会议记录整理成一份周报。", "事件里要留下它看的是什么"
+    assert gate.used == 0, "没查就不该扣格"
+    assert search.calls == []
+
+
+def test_h2_without_entity_also_skips():
+    engine, search = _engine()
+    out = asyncio.run(engine.on_stuck("Connection reset by peer"))
+    assert out.event.skipped == "no_entity"
+    assert search.calls == []
+
+
+def test_h0_still_queries_without_entity():
+    """H0 是逃生口：人点名了就得查，哪怕文本里没有图上的实体名。"""
+    engine, search = _engine()
+    out = asyncio.run(engine.on_named("上个月那件事怎么样了"))
+    assert out.event.queried is True
+    assert out.event.exempt is True
+    assert search.calls[0][0]["query"] == "上个月那件事怎么样了"
 
 
 def test_h2_anchor_uses_error_entities():
     engine, search = _engine()
-    out = asyncio.run(engine.on_stuck("KeyError: 张三 的字段缺失", "刚才在读写字节跳动那条记录"))
+    out = asyncio.run(
+        engine.on_stuck("KeyError: 张三 的字段缺失", "刚才在读写字节跳动那条记录")
+    )
     assert out.event.entities == ["张三", "字节跳动"]
     context, _ = search.calls[0]
     assert context["query"] == "张三 字节跳动"

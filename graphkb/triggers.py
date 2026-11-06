@@ -14,12 +14,17 @@
 
 | 钩子 | 时机 | 锚（query 位） | 证据（task 位） |
 | --- | --- | --- | --- |
-| **H1 起手查** | Plan 入口 | 任务里探到的实体名；没有就用任务首句 | 任务描述 |
-| **H2 卡壳查** | 报错 / 重试 | 错误信息里探到的实体名；没有就用错误首句 | 错误 + 上下文 |
+| **H1 起手查** | Plan 入口 | 任务里探到的实体名 | 任务描述 |
+| **H2 卡壳查** | 报错 / 重试 | 错误信息里探到的实体名 | 错误 + 上下文 |
 | **H3 回想查** | 上下文命中图实体时 | 命中实体名 | 当前上下文 |
-| **H0 显式点名** | 随时 | 点名文本里的实体名；没有就原样 | 点名文本 |
+| **H0 显式点名** | 随时 | 实体名；没有就点名原文 | 点名文本 |
 
 自动的只有 H1/H2/H3；H0 是**逃生口**，不占总闸（用户点名必须响应）。
+
+自动钩子探不到实体就**不查**，只记一笔 `skipped="no_entity"`。这不是懒：
+M1 约定下 query 与 task 相等会让证据层塌成空、退化成人类面语义（**白花一次 LLM 生成答案**），
+拿这个去赌向量相似度是把钱花在噪声上。探不到实体就说明「这段文本里没有任何图上认得的东西」，
+漏查的代价只是少一次助攻，H0 随时可补。
 
 ## H3 的精髓：零成本探针
 
@@ -243,12 +248,12 @@ class TriggerEngine:
 
     async def on_plan(self, task: str) -> TriggerOutcome:
         """H1 起手查：任务边界清晰、频率低、价值高——「开干之前先想起」。"""
-        return await self._fire("H1", "plan", task, task)
+        return await self._fire("H1", "plan", task, task, require_entity=True)
 
     async def on_stuck(self, error: str, context: str = "") -> TriggerOutcome:
         """H2 卡壳查：价值最高——「上次这个坑是这么填的」。"""
         evidence = f"{error}\n{context}".strip() if context else str(error)
-        return await self._fire("H2", "stuck", str(error), evidence)
+        return await self._fire("H2", "stuck", str(error), evidence, require_entity=True)
 
     async def on_context(self, text: str) -> TriggerOutcome:
         """H3 回想查：只在探针命中图实体时才查，不做周期性主动扫描。"""
@@ -291,7 +296,8 @@ class TriggerEngine:
         )
 
         if require_entity and not entities:
-            # H3 的定义就是「字面似曾相识」；没命中就不该花预算去赌向量相似度
+            # 自动钩子探不到实体就不查（H3 的定义本来就是这样，H1/H2 同理）：
+            # query 与 task 相等会触发 texts_equal 退化 → 白花一次 LLM 生成答案。
             event.skipped = "no_entity"
             self.events.append(event)
             return TriggerOutcome(event)

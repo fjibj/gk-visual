@@ -76,14 +76,30 @@ M4 计划里写的是「虚线边框/小图标」。但 **边框通道已经被 
 
 恒为四态之一，**读不到就是 `unknown`，不是 `null`**——字段恒在，调用方不用写两种分支。
 
-## 6. 边界
+## 6. 跳版本坑：1.5.7 把手工关系的 `source_id` 改成了空串
+
+第一版只在本地（lightrag 1.5.6）全绿，CI（1.5.7）上 `test_graph_marks_manual_origin` 直接红：
+手工建的实体是 `manual`，手工建的**边**却是 `unknown`。
+
+原因：1.5.7 的 `utils_graph.acreate_relation` 把 `source_id` 默认值从 `"manual_creation"`
+改成了空串（docstring 明写“An omitted source_id is stored as an empty string”），
+但 `file_path` 仍写 `"manual_creation"`。只认 `source_id` 的话，同一件事在两个小版本里两种结论。
+
+修法：`origin_of(source_id, file_path)` 两边都看——`source_id` 或 `file_path` 里出现
+`manual_creation` 就算人工痕迹。加了回归用例（`test_origin_lightrag_157_manual_relation_shape`），
+并把本机 lightrag 升到 1.5.7、与 CI 同版跑一遍（147 passed）。
+
+教训：M0 已经因为 1.5.7 红过一次（`get_docs_by_status`）。**凡是把上游存储字段当契约读的地方，
+就得在两个小版本上都跑一遍**——本地绿不等于 CI 绿。
+
+## 7. 边界
 
 - 分不出「谁、什么时候改的」；也没有「改回去」的历史。要那些得真上审计日志。
 - `memory.ingest(origin="session")` 里的 origin 是**另一个维度**（记忆从哪来：doc/session/note），
   当前只回显不落库。别把它和节点 origin 混为一谈——这一点在 README 与 job warnings 里都写明了。
 - 底晕在超大图上会增加渲染负担（cytoscape 每条元素多一层绘制）。个人库规模（几百节点）无感。
 
-## 7. 测试
+## 8. 测试
 
 - `tests/test_provenance.py`（10 例）：四态判定、批量解析、顺序对齐、unresolved 计数、
   块存储炸掉不崩、`unknown_source` 回退 doc_id、按名字取（含取不到不进结果）。

@@ -80,6 +80,32 @@ def test_origin_four_states():
     assert origin_of(["manual_creation"]) == ORIGIN_MANUAL
 
 
+def test_origin_lightrag_157_manual_relation_shape():
+    """跨版本坑：1.5.7 把手工新建**关系**的 source_id 默认值从 "manual_creation" 改成空串。
+
+    只认 source_id 的话，同一个手工建的边在 1.5.6 上是 manual、在 1.5.7 上变 unknown——
+    同一件事两个结论。所以 file_path 上的哨兵也算数（它两个版本都写）。
+    """
+    assert origin_of("", "manual_creation") == ORIGIN_MANUAL
+    assert origin_of("manual_creation", "manual_creation") == ORIGIN_MANUAL
+    # 抽取来的：source_id 有块，file_path 是哨兵或文档名，都不该被误判成人工
+    assert origin_of("c1", "unknown_source") == ORIGIN_EXTRACTED
+    assert origin_of("c1", "张三简历") == ORIGIN_EXTRACTED
+    # 两样都有
+    assert origin_of("c1<SEP>manual_creation", "unknown_source<SEP>manual_creation") == ORIGIN_MIXED
+    # 真的什么都没有
+    assert origin_of("", "") == ORIGIN_UNKNOWN
+
+
+def test_annotate_marks_157_manual_relation():
+    prov = asyncio.run(
+        annotate(_rag(DOC_ROWS), [{"source_id": "", "file_path": "manual_creation"}])
+    )[0]
+    assert prov.origin == ORIGIN_MANUAL
+    assert prov.manual is True
+    assert prov.chunks == 0
+
+
 def test_annotate_resolves_docs_and_counts_chunks():
     prov = asyncio.run(
         annotate(_rag(DOC_ROWS), [{"source_id": "c1<SEP>c2<SEP>manual_creation"}])

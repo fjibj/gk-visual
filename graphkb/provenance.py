@@ -57,18 +57,24 @@ def split_refs(value) -> list[str]:
     return [p.strip() for p in raw if p and p.strip()]
 
 
-def origin_of(source_id) -> str:
-    """由 `source_id` 判定 origin。规则只有三条，靠结构不靠阈值。"""
+def origin_of(source_id, file_path=None) -> str:
+    """由 `source_id`（必要时加上 `file_path`）判定 origin。规则只有三条，靠结构不靠阈值。
+
+    为什么要看 `file_path`：LightRAG 1.5.7 把手工新建**关系**的 `source_id` 默认值从
+    `"manual_creation"` 改成了空串（见 `utils_graph.acreate_relation` 的 docstring），
+    但 `file_path` 仍写 `"manual_creation"`。只认 source_id 的话，1.5.6 上手工建的边是
+    manual、1.5.7 上就变成 unknown——同一件事在两个小版本里两种结论，不可接受。
+    """
     refs = split_refs(source_id)
-    if not refs:
-        return ORIGIN_UNKNOWN
-    manual = MANUAL_SENTINEL in refs
+    manual = MANUAL_SENTINEL in refs or MANUAL_SENTINEL in split_refs(file_path)
     extracted = any(r not in NON_CHUNK_REFS for r in refs)
     if manual and extracted:
         return ORIGIN_MIXED
     if manual:
         return ORIGIN_MANUAL
-    return ORIGIN_EXTRACTED
+    if refs:
+        return ORIGIN_EXTRACTED
+    return ORIGIN_UNKNOWN
 
 
 @dataclass
@@ -131,8 +137,10 @@ async def annotate(rag, records: list[dict]) -> list[Provenance]:
     index = await _chunk_docs(rag, wanted)
 
     out: list[Provenance] = []
-    for refs in refs_per:
+    for record, refs in zip(records, refs_per):
         chunk_refs = [r for r in refs if r not in NON_CHUNK_REFS]
+        file_path = record.get("file_path")
+        manual = MANUAL_SENTINEL in refs or MANUAL_SENTINEL in split_refs(file_path)
         docs: list[str] = []
         doc_ids: list[str] = []
         unresolved = 0
@@ -148,8 +156,8 @@ async def annotate(rag, records: list[dict]) -> list[Provenance]:
                 doc_ids.append(doc_id)
         out.append(
             Provenance(
-                origin=origin_of(refs),
-                manual=MANUAL_SENTINEL in refs,
+                origin=origin_of(refs, file_path),
+                manual=manual,
                 docs=docs,
                 doc_ids=doc_ids,
                 chunk_ids=chunk_refs,

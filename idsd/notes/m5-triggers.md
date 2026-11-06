@@ -22,16 +22,22 @@ S7 立下的「阈值是运气不是判据」约束的是**判据**。触发器�
 
 | 钩子 | 时机 | 锚（query 位） | 证据（task 位） |
 | --- | --- | --- | --- |
-| H1 起手查 | Plan 入口 | 探到的实体名；没有就用任务首句 | 任务描述 |
+| H1 起手查 | Plan 入口 | 探到的实体名 | 任务描述 |
 | H2 卡壳查 | 报错 / 重试 | 错误信息里的实体名 | 错误 + 上下文 |
 | H3 回想查 | 上下文命中图实体 | 命中实体名（必然非空） | 当前上下文 |
-| H0 显式点名 | 随时 | 点名文本里的实体名 | 点名文本 |
+| H0 显式点名 | 随时 | 实体名；没有就点名原文 | 点名文本 |
 
 自动的只有 H1/H2/H3；**H0 是逃生口**，不占总闸（用户点名必须响应）。
 
 **为什么锚位用实体名而不是整段文本**：M1 的双文本改造就是这么约定的——`query` 位放"短锚"、
 `task` 位放"证据"。把任务原文同时塞进两位会直接触发 `texts_equal` 退化（探针 B §4 那个坑），
-证据层塌成空。所以钩子先探实体、拿实体名当锚；探不到才退回首句。
+证据层塌成空，而且会退回人类面语义——**白花一次 LLM 生成答案**。
+所以钩子先探实体、拿实体名当锚；**探不到就不查**（记 `skipped="no_entity"`）。
+
+这条比设计文档（「H1 anchor=任务描述」）严一格，是有意的：设计写的时候还没做双文本改造，
+没算过退化代价。实测无实体 H1 退回人类面后：`degraded=true, reason=texts_equal`，
+cited 出 5 个实体、`answer_context` 533 token，里面全是周杰伦/台北/腾讯——
+既烧了一次 LLM，又往上下文里灌了噪声。漏查只是少一次助攻，H0 随时可补。
 
 ## 3. H3 的探针为什么不建 Aho-Corasick
 
@@ -48,11 +54,12 @@ S7 立下的「阈值是运气不是判据」约束的是**判据**。触发器�
 
 ## 4. 总闸：拦下但不沉默
 
-`SessionGate(limit)` 只管「查几次」。规则三条：
+`SessionGate(limit)` 只管「查几次」。规则四条：
 
-1. **只有真正发起 `memory.search` 才扣一格**——被拦下、探针不亮都不算「查过」；
+1. **只有真正发起 `memory.search` 才扣一格**——被拦下、探不到实体都不算「查过」；
 2. **拦下是正常路径，不是异常**：返回 `skipped="gate_exhausted"` + 事件；
-3. **H0 免扣**：`exempt=true`，总闸为 0 也照查。
+3. **H0 免扣**：`exempt=true`，总闸为 0 也照查；
+4. **探不到实体也不扣**：`skipped="no_entity"`（见 §2）。
 
 事件（`engine.trace()`）字段：
 `hook / hook_name / phase / anchor / entities / queried / skipped / hit / degraded / reason / gate_left / exempt / context_tokens / spill`。
@@ -98,4 +105,4 @@ queried=true  hit=true  degraded=false  gate_left=4  context_tokens=295
 H3 无实体不花预算、H0 豁免总闸为 0）、事件字段（hit / budget / gate_left / 失败不崩）、
 预算透传、`GKB_TRIGGER_K` 生效。
 
-pytest：141 passed（全离线）。
+pytest：147 passed（全离线；本机 lightrag 已升到 1.5.7，与 CI 同版）。
