@@ -383,17 +383,24 @@ def _bundle(result, max_tokens: int):
 
 @pytest.mark.parametrize("case", ["h1_plan"])
 def test_injection_lines_are_never_bare_names(case):
-    """注入里每一行都得说清「是什么」：类型 + 描述，不能只剩名字。"""
+    """注入里每一行都得说清「是什么」：至少要带类型（path 层不要求描述，这是按层分预算的选择）。
+
+    path 行只负责证明「锚点和引用点连得上」，带类型 + 名字就够；要描述用 `entity:` 取。
+    真正要防的是「[path] MVP」那种连类型都没有的裸名字。
+    """
     _graph_obj, result = _run_case(case)
     bundle = _bundle(result, DEFAULT_MAX_CONTEXT_TOKENS)
     assert bundle.text
 
     lines = [ln for ln in bundle.text.splitlines() if ln.strip()]
-    entity_lines = [ln for ln in lines if " -> " not in ln]
+    entity_lines = [ln for ln in lines if " -> " not in ln and not ln.startswith("[chunk]")]
     assert entity_lines
     for line in entity_lines:
         assert "（" in line, f"没有类型：{line}"
-        assert "：" in line, f"没有描述：{line}"
+        if line.startswith("[path]"):
+            assert "：" not in line, f"path 层不该带描述（省额度）：{line}"
+        else:
+            assert "：" in line, f"锚点/引用点没有描述：{line}"
 
 
 def test_injection_respects_budget_and_accounts_every_item():
@@ -587,10 +594,10 @@ def test_m2_unlinked_chunks_stay_out_of_injection():
 
 
 def test_m2_real_graph_injection_is_dominated_by_path_nodes():
-    """真图上注入的主体是**路径中间节点**：1 个锚 + 2 个引用点 → 10 行 path。
+    """真图上注入的行数仍由路径节点占多数，但**额度**现在被它们省下来了。
 
-    中间节点只是「这两个人确实连得上」的证据，却和锚点/引用点抢同一份额度。
-    这就是密度问题的根因（backlog #1 的三个候选方案就是冲它去的），铉在这里。
+    1 个锚 + 2 个引用点 → 10 行 path：行数过半，token 却只占一两成——
+    这就是按层分预算想要的效果（行数不是问题，额度才是）。
     """
     graph, base = _replay("h1_plan")
     a, b, c = _pick_three(base, graph)
@@ -600,11 +607,20 @@ def test_m2_real_graph_injection_is_dominated_by_path_nodes():
     lines = [ln for ln in res["answer_context"].splitlines() if ln.startswith("[")]
     layers = [ln.split("]")[0] + "]" for ln in lines]
     assert layers.count("[anchor]") == 1
-    assert layers.count("[path]") > len(layers) / 2, f"path 占比应当过半：{layers}"
+    assert layers.count("[path]") > len(layers) / 2, f"path 行数应当过半：{layers}"
+
+    by_layer = res["trace"]["budget_used"]["context_by_layer"]
+    path_tokens = by_layer["path"]["tokens"]
+    assert path_tokens <= res["trace"]["budget_used"]["context_used"] * 0.35, (
+        f"path 层额度应当很小：{by_layer}"
+    )
+    for line in lines:
+        if line.startswith("[path]"):
+            assert "：" not in line, f"path 行不该带描述：{line}"
 
 
 def test_m2_real_graph_overflow_lands_on_chunks():
-    """图侧装得下、块侧就装不下：溢出全落在 chunk 上，而且都带引用能取回。"""
+    """按层分预算之后：图侧（实体/关系）全进得来，溢出全落在块上且可取回。"""
     graph, base = _replay("h1_plan")
     a, b, c = _pick_three(base, graph)
     rag = _ReplayRag(_case("h1_plan"), graph, _chunks())
@@ -614,9 +630,12 @@ def test_m2_real_graph_overflow_lands_on_chunks():
     assert res["degraded"] is True
     used = res["trace"]["budget_used"]
     graph_items = len(res["hits"]["entities"]) + len(res["hits"]["relationships"])
-    assert used["context_inline"] == graph_items, "这个 case 的实体/关系刚好装得下，溢出的是块"
-    assert {r["kind"] for r in res["spill_refs"]} == {"chunk"}
-    assert used["spilled_tokens"] > used["context_used"], "没装进去的比装进去的还多"
+    assert used["context_inline"] >= graph_items, "实体与关系应当全进得来（path 层省下的额度够用）"
+    assert {r["kind"] for r in res["spill_refs"]} == {"chunk"}, "溢出应当只落在块上"
+    for ref in res["spill_refs"]:
+        assert ref["ref"].split(":", 1)[1] in {
+            str(c_["chunk_id"]) for c_ in res["hits"]["chunks"]
+        }
 
 
 def test_m2_budget_truncated_is_overflow_not_drop():
@@ -860,19 +879,15 @@ def test_live_real_workspace_end_to_end(tmp_path):
     from graphkb.triggers import SessionGate, TriggerEngine
 
     load_dotenv()
-    # workspace 必须是**这个进程里唯一的**：lightrag 的 KV 存储把数据挂在进程级共享字典
-    # `_shared_dicts[workspace:namespace]` 下（由第一次加载的那个实例填进去）。
-    # 默认 workspace="" 时，前面用过的 mock 实例已经把 text_chunks 填成它那份，
-    # 本实例就会“图是那 260 个实体、块却全找不到”——同一进程里两个库相亲。
-    # 所以拷到 `<tmp>/ws/live/` 并把 workspace 设成 live，让 namespace 隔离。
-    ws_root = tmp_path / "ws"
-    ws_root.mkdir()
-    ws = ws_root / "live"
+    # 这里故意用 workspace=""（与其它测试实例同 workspace）：就是要让自动隔离过一遍。
+    # LightRAG 的 KV 挂在进程级共享字典上，同 workspace 不同目录的第二实例本来会
+    # “图读得到 260 个节点、块全查不到”；`rag.init_rag` 里的脱钩就是冲这个去的。
+    ws = tmp_path / "ws"
     shutil.copytree(REAL_WORKSPACE, ws)
 
     cfg = load_config()
-    cfg.working_dir = str(ws_root)
-    cfg.workspace = "live"
+    cfg.working_dir = str(ws)
+    cfg.workspace = ""
 
     async def scenario() -> dict:
         rag = await init_rag(cfg)
@@ -937,7 +952,9 @@ def test_live_real_workspace_end_to_end(tmp_path):
     assert ctx
     for line in ctx.splitlines():
         if line.startswith(("[anchor]", "[cited]", "[path]")) and " -> " not in line:
-            assert "（" in line and "：" in line, f"注入里出现裸名字：{line}"
+            assert "（" in line, f"注入里出现裸名字：{line}"
+            if not line.startswith("[path]"):
+                assert "：" in line, f"锚点/引用点没有描述：{line}"
     assert out["off"].event.queried is False and out["off"].event.skipped == "no_entity"
     assert out["named"].event.queried is True and out["named"].event.exempt is True
 

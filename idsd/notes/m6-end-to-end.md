@@ -217,7 +217,7 @@ token 估算因此仍然可复算。要留原始副本用 `--raw`，但别提交
 - `tests/test_render.py` 新增 `test_hit_trace_path_node_attrs_come_from_graph`（真图那个裸名字缺陷的回归）。
 - `tests/test_real_graph.py`：13 条链路回放 + **21 条 M1–M5 逐层回放** + 1 条现场用例。
 - `tests/test_rag_guard.py` 新增 3 条（同 workspace 冲突要 warning）。
-- 全量：**187 passed**（含现场用例，本机真库 260 实体 + Ollama）；CI 里现场用例 skip，报 186 passed / 1 skipped。
+- 全量：**190 passed**（含现场用例，本机真库 260 实体 + Ollama）；CI 里现场用例 skip，报 189 passed / 1 skipped。
 
 ## 10. 真图跑 M1–M5 发现的两件事（2026-11-06）
 
@@ -244,3 +244,27 @@ token 估算因此仍然可复算。要留原始副本用 `--raw`，但别提交
 处置：`graphkb/rag.py` 加 `_warn_if_workspace_shared()`——同 workspace、不同 `working_dir` 时 warning，
 把坑喊出来而不偷偷绕过；现场用例改用 `<tmp>/ws/live/` + `workspace="live"` 做隔离；
 根治方案（自动隔离 / 报上游 / 定死单库单进程）入 [`backlog.md`](../backlog.md) 条目 19。
+
+## 11. 处置（2026-11-06 当天做完）
+
+**① 注入密度 → 按层分配预算**（`graphkb/memory_api.py: LAYER_SHARES`）。
+anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%；path 层只带名字 + 类型（描述靠 `entity:` 取）；
+份额是**软上限**（后面几层花不完的额度当前层可以先吃，否则「预算恰好够用」会被错杀），
+用不完的往下传，每层花费记进 `budget_used.context_by_layer`。
+
+同图同 800 token 的实测：
+
+| 场景 | 改前 | 改后 |
+| --- | --- | --- |
+| 1 锚 + 2 引用 | inline 13 / 668 token，spill 3 块 / 1146 | inline 14 / 692，spill 2 / 764 |
+| 3 锚无引用 | inline 12 / 794，spill 12 / 3296 | inline 17 / 735，spill 7 / 2674 |
+| demo 真图 H1 | inline 9 / 797，spill 41 / 4380 | inline 34 / 734，spill 16 / 2936 |
+
+**② 同进程同 workspace 的 KV 串台 → 自动隔离**（`graphkb/rag.py: _isolate_shared_kv`）。
+判定不看「谁先谁后」而看**内容**：我的磁盘文件里有、共享字典里没有 → 把这个存储换成
+本实例自己的字典（读自己的文件、写也只落自己的目录）；同库重复建实例则不动，保持上游共享语义。
+现场组已改回 `workspace=""`，靠它自动隔离跑通（日志实测 8 个 KV 存储被脱钩）。
+
+代价：被隔离的实例不再与其它实例共享内存（本来指向不同目录，共享才是错的）；
+多进程 `initialize_share_data` 那套协议没参与（graphkb 目前单进程）。这仍是 graphkb 层的补丁，
+上游该把「库目录」也纳入初始化判定——留给报 issue。

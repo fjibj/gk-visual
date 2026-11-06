@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from graphkb.config import Config
-from graphkb.memory_api import MemoryTools, estimate_tokens, resolve_budget
+from graphkb.memory_api import MemoryTools, build_answer_context, estimate_tokens, resolve_budget
 
 # ---------------------------------------------------------------- 假对象
 
@@ -396,6 +396,42 @@ def test_resolve_budget_defaults_come_from_config():
 
 
 # ---------------------------------------------------------------- M3：Inline & Spill
+
+
+def test_layer_budget_path_layer_is_compact():
+    """path 层只带名字 + 类型：额度小、不带描述（描述可在 spill 摘要里，也能用 entity: 取）。"""
+    entities = [
+        {"name": "锚点", "type": "concept", "layer": "anchor", "description": "锚点的完整描述" * 8},
+        {"name": "中间", "type": "concept", "layer": "path", "description": "路径节点的完整描述" * 8},
+    ]
+    bundle = build_answer_context(entities, [], [], 800)
+    lines = bundle.text.splitlines()
+    assert any(ln.startswith("[anchor] 锚点") and "：" in ln for ln in lines)
+    path_line = next(ln for ln in lines if ln.startswith("[path] 中间"))
+    assert "（concept）" in path_line
+    assert "：" not in path_line, path_line
+    assert bundle.layer_used["path"]["tokens"] < bundle.layer_used["anchor"]["tokens"]
+
+
+def test_layer_budget_unused_share_flows_forward():
+    """锚点没花完的额度要传给后面的层，不能因为分层而白白扔掉。"""
+    entities = [{"name": "锚点", "type": "t", "layer": "anchor", "description": "短"}]
+    relationships = [
+        {"src": "锚点", "tgt": f"证据{i}", "layer": "direct", "description": "关系描述" * 6}
+        for i in range(3)
+    ]
+    bundle = build_answer_context(entities, relationships, [], 300)
+    assert bundle.layer_used["direct"]["inline"] == 3, bundle.layer_used
+
+
+def test_layer_budget_soft_cap_when_nothing_else_competes():
+    """后面没人抢时，本层可以吃满（份额是软上限）——否则“预算恰好够用”会被错杀。"""
+    entities = [{"name": "唯一一个", "type": "t", "layer": "anchor", "description": "描述" * 20}]
+    roomy = build_answer_context(entities, [], [], 2000)
+    need = roomy.used_tokens
+    exact = build_answer_context(entities, [], [], need)
+    assert exact.spill_refs == []
+    assert exact.used_tokens == need
 
 
 def test_budget_boundary_exact_fit_vs_one_under():

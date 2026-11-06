@@ -47,6 +47,20 @@ DESC_CLIP = 240  # 实体/关系描述进上下文时最多保留多少字（全
 CHUNK_CLIP = 400  # 块内容进上下文时最多保留多少字
 SPILL_SUMMARY_CHARS = 60  # spill_ref 的一行摘要多少字
 
+# 按层分配预算（2026-11-06 真图实测后改）：每层一份软上限，用不完的往下传（waterfall）。
+# 为什么分层：真图上 `1 个锚 + 2 个引用点` 的 13 行注入里有 10 行是 [path]——
+# 中间节点只需要证明「锚点和引用点确实连得上」，却和锚点抢同一份额度，把关系与块挤去溢出。
+# 所以 path 层两件事：只带名字 + 类型（不带描述），且额度最小；锚点/证据用不完的额度
+# 会传给后面的层，不会白白浪费。
+LAYER_SHARES: dict[str, float] = {
+    "anchor": 0.40,  # 问题的落点：完整描述
+    "cited": 0.25,  # 证据：完整描述
+    "direct": 0.15,  # 命中关系（两端都是锚点/引用点，本身就是证据）
+    "path": 0.12,  # 连通性证据：只要名字 + 类型
+    "chunk": 0.08,  # 原文：只进来一点点，其余靠 spill_ref 取
+}
+LAYER_ORDER: tuple[str, ...] = tuple(LAYER_SHARES)
+
 MAX_EXPAND_ITEMS = 20  # memory.expand 一次最多取回几条，防止被当批量导出器用
 DEFAULT_EXPAND_MAX_TOKENS = 2000  # 单条取回内容的默认预算
 
@@ -195,6 +209,7 @@ class ContextBundle:
     inline_count: int = 0
     spill_refs: list[dict] = field(default_factory=list)
     spilled_tokens: int = 0
+    layer_used: dict[str, dict] = field(default_factory=dict)
 
     def budget_trace(self) -> dict:
         return {
@@ -202,19 +217,31 @@ class ContextBundle:
             "context_inline": self.inline_count,
             "context_spilled": len(self.spill_refs),
             "spilled_tokens": self.spilled_tokens,
+            # 每层实际花了多少（审计面：不只告诉你总量，还告诉你是谁花的）
+            "context_by_layer": {k: dict(v) for k, v in self.layer_used.items()},
         }
 
 
-def _entity_candidate(e: dict) -> Candidate | None:
+def _bucket_of_entity(e: dict) -> str:
+    layer = str(e.get("layer") or "")
+    return layer if layer in ("anchor", "cited", "path") else "cited"
+
+
+def _bucket_of_relation(r: dict) -> str:
+    return "path" if str(r.get("layer") or "") == "path" else "direct"
+
+
+def _entity_candidate(e: dict, *, compact: bool = False) -> Candidate | None:
+    """`compact=True` 是给 path 层的：只留名字 + 类型，描述不进注入（摘要里仍保留）。"""
     name = str(e.get("name") or "")
     if not name:
         return None
     layer = e.get("layer") or "entity"
+    desc = _plain(e.get("description"))
     line = f"[{layer}] {name}"
     if e.get("type"):
         line += f"（{e['type']}）"
-    desc = _plain(e.get("description"))
-    if desc:
+    if desc and not compact:
         line += f"：{_clip(desc, DESC_CLIP)}"
     summary = name + (f"（{e['type']}）" if e.get("type") else "")
     if desc:
@@ -222,7 +249,7 @@ def _entity_candidate(e: dict) -> Candidate | None:
     return Candidate("entity", entity_ref(name), line, summary, estimate_tokens(line) + 1)
 
 
-def _relation_candidate(r: dict) -> Candidate | None:
+def _relation_candidate(r: dict, *, compact: bool = False) -> Candidate | None:
     src, tgt = str(r.get("src") or ""), str(r.get("tgt") or "")
     if not src or not tgt:
         return None
@@ -231,7 +258,7 @@ def _relation_candidate(r: dict) -> Candidate | None:
     line = f"[{layer}] {src} -> {tgt}"
     if r.get("keywords"):
         line += f"［{_plain(r.get('keywords'))}］"
-    if desc:
+    if desc and not compact:
         line += f"：{_clip(desc, DESC_CLIP)}"
     summary = f"{src} -> {tgt}" + (f"：{_clip(desc, SPILL_SUMMARY_CHARS)}" if desc else "")
     return Candidate("relation", relation_ref(src, tgt), line, summary, estimate_tokens(line) + 1)
@@ -252,43 +279,77 @@ def build_answer_context(
     chunks: list[dict],
     max_tokens: int,
 ) -> ContextBundle:
-    """Inline & Spill：预算内的进 `answer_context`，超出的变成 `spill_refs`。
+    """Inline & Spill + **按层分配预算**：预算内的进 `answer_context`，超出的变成 `spill_refs`。
 
-    两条规矩：
-    · 注入内容只从这里出（零 LLM、可复算、确定性顺序：anchor → cited → path → 关系 → 块）；
-    · **溢出不是丢弃**——预算是「展示预算」，不是「语义筛」。装不下的保留引用 + 一行摘要，
-      调用方需要时再取（这是 claude-mem 那种「全塞进 prompt」与「默默丢掉」之外的第三条路）。
+    三条规矩：
+    · 注入内容只从这里出（零 LLM、可复算、确定性顺序）；
+    · **溢出不是丢弃**——预算是「展示预算」，不是「语义筛」；装不下的保留引用 + 一行摘要，
+      调用方需要时再取（third way：既不是「全塞进 prompt」也不是「默默丢掉」）；
+    · **按层给额度**（`LAYER_SHARES`）：锚点 → 证据 → 命中关系 → 路径 → 块。
+      每层只分到一份软上限，花不完的额度自动传给下一层；路径层只带名字 + 类型。
+      这一条是拿真图改的：不分层时 13 行注入里有 10 行是路径节点（占 77% 的行、也占额），
+      而它们只负责证明「连得上」，不需要完整描述（要描述用 `entity:` 取）。
     """
-    cands: list[Candidate] = []
+    buckets: dict[str, list[Candidate]] = {key: [] for key in LAYER_ORDER}
     for e in sorted(entities, key=lambda x: (_layer_rank(x.get("layer")), str(x.get("name") or ""))):
-        c = _entity_candidate(e)
-        if c:
-            cands.append(c)
+        bucket = _bucket_of_entity(e)
+        cand = _entity_candidate(e, compact=(bucket == "path"))
+        if cand:
+            buckets[bucket].append(cand)
     for r in sorted(relationships, key=lambda x: _layer_rank(x.get("layer"))):
-        c = _relation_candidate(r)
-        if c:
-            cands.append(c)
+        bucket = _bucket_of_relation(r)
+        cand = _relation_candidate(r, compact=(bucket == "path"))
+        if cand:
+            buckets[bucket].append(cand)
     for raw in chunks:
-        c = _chunk_candidate(raw)
-        if c:
-            cands.append(c)
+        cand = _chunk_candidate(raw)
+        if cand:
+            buckets["chunk"].append(cand)
 
     bundle = ContextBundle()
     seen: set[str] = set()
+
+    # 先算每层的"真实需求"（去重后），后面拿它来判"后面几层还需不需要这么多额度"。
+    # 不分需求只看份额，会把“预算刚好够用”的场景错杀：一个 60 token 的锚点配 60 的预算，
+    # 按 40% 只能给它 24，窝一下就溢出了。份额是**软**上限：后面没人抢时，本层可以吃满。
+    demand: dict[str, int] = {}
+    for bucket in LAYER_ORDER:
+        need = 0
+        for c in buckets[bucket]:
+            if c.ref in seen:
+                continue
+            seen.add(c.ref)
+            need += c.tokens
+        demand[bucket] = need
+    seen.clear()
+
     lines: list[str] = []
-    for c in cands:
-        if c.ref in seen:  # 同一引用只留一条（路径实体常同时出现在实体表与关系表里）
-            continue
-        seen.add(c.ref)
-        if bundle.used_tokens + c.tokens <= max_tokens:
-            lines.append(c.line)
-            bundle.used_tokens += c.tokens
-            bundle.inline_count += 1
-        else:
-            bundle.spill_refs.append(
-                {"ref": c.ref, "kind": c.kind, "summary": c.summary, "tokens": c.tokens}
-            )
-            bundle.spilled_tokens += c.tokens
+    carry = 0  # 上一层没花完、传给下一层的额度
+    for index, bucket in enumerate(LAYER_ORDER):
+        rest_demand = sum(demand[b] for b in LAYER_ORDER[index + 1 :])
+        left = max_tokens - bundle.used_tokens
+        allowance = max(0, left - rest_demand)  # 后面几层花不完的部分，本层可以先吃
+        cap = max(0, min(left, int(max_tokens * LAYER_SHARES[bucket]) + carry + allowance))
+        started = bundle.used_tokens
+        inline = 0
+        for c in buckets[bucket]:
+            if c.ref in seen:  # 同一引用只留一条（路径实体常同时出现在实体表与关系表里）
+                continue
+            seen.add(c.ref)
+            used_here = bundle.used_tokens - started
+            if bundle.used_tokens + c.tokens <= max_tokens and used_here + c.tokens <= cap:
+                lines.append(c.line)
+                bundle.used_tokens += c.tokens
+                bundle.inline_count += 1
+                inline += 1
+            else:
+                bundle.spill_refs.append(
+                    {"ref": c.ref, "kind": c.kind, "summary": c.summary, "tokens": c.tokens}
+                )
+                bundle.spilled_tokens += c.tokens
+        spent = bundle.used_tokens - started
+        bundle.layer_used[bucket] = {"inline": inline, "tokens": spent, "cap": cap}
+        carry = max(0, cap - spent)
     bundle.text = "\n".join(lines)
     return bundle
 

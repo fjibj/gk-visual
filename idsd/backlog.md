@@ -171,7 +171,7 @@
 
 ## 18. 注入密度：真图上「路径节点」吃掉了大半预算（也压住了块）
 
-- **状态**：候选，待用户点选方案（2026-11-06 真图跑 M1–M5 时量化）。
+- **状态**：**已实现（2026-11-06，方案 ③）**。
 - **现象**（真图夹具 80 节点 / 真库 260 节点，`budget.max_context_tokens=800`）：
   - `query=锚点A`、`task` 里点名 B、C → 命中 7 实体 / 6 关系，**13 行注入刚好塞满 668 token**，其中 `[path]` 占 **10 行**（1 锚 + 2 引用 + 10 中间节点）。
   - 三个锚点、无引用点 → 12 行注入里 9 行是 `[path]`；同时 4 条关系 + 8 块溢出（3296 token）。
@@ -182,15 +182,14 @@
   2. **分段截断**：每段只取第一句、最多 N 段；
   3. **按层分配预算**：anchor 占大头、cited 次之、path 只留「名字 + 类型」（它只需要证明连得上，不需要完整描述），块只在有明确引用时进。
 - **建议**：先做 ③（收益最大、且不丢信息：path 的描述本来就可以靠 `entity:` 取回），再叠 ①。
+- **落地（方案 ③）**：`graphkb/memory_api.py` 新增 `LAYER_SHARES`（anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%），path 层只带名字 + 类型；份额是**软上限**（后面几层花不完的额度当前层可以先吃，否则「预算恰好够用」会被错杀），用不完的往下传（waterfall），每层花费记进 `budget_used.context_by_layer`。同图同 800 token 的实测：1 锚 + 2 引用从「inline 13 / spill 3 块 1146」变成「inline 14 / spill 2 块 764」；3 锚场景从「inline 12 / spill 12」变成「inline 17 / spill 7」；demo 真图 H1 从 inline 9 条变 34 条。细节见 `idsd/notes/m3-inline-spill.md` §7。
+- **残留**：`degraded` 在真图上仍是常态（块装不下就是 `budget_truncated`）——溢出不是丢弃，但默认 800 token 对 260 实体这种图偏紧；要不要调大默认值或按图规模自适应，另议（方案 ①/② 也还没做）。
 
 ## 19. 同进程里两个实例同 workspace：KV 静默为空
 
-- **状态**：已加哨（`graphkb/rag.py` 检测并 warning，2026-11-06），根治待定。
+- **状态**：**已实现自动隔离（2026-11-06）**。
 - **现象**（真图回归蹲到）：一个进程里先建过实例 A（库目录 a、`workspace=""`），再建实例 B（库目录 b、同样 `workspace=""`）——B 的 `text_chunks` 是 **0 条**，按 id 取块一律 `None`；图却正常（260 个节点读得到）。表现是 `memory.expand` 全报 `missing`，容易误判成「块被删了」。
 - **根因**：LightRAG 的 KV 数据挂在**进程级**共享字典 `_shared_dicts[workspace:namespace]` 上，而「谁负责从磁盘加载」只是全局初始化标志 `_init_flags`。A 先把 `:text_chunks` 标成已初始化并填进去，B 看到标志就不再读自己的 JSON 文件。GraphML 是每个实例自己读文件，所以图不受影响。
-- **现在怎么办**：并行开多个库时给每个实例**不同的 `workspace`**（文件放在 `<working_dir>/<workspace>/` 下），或拆进程。真图回归的 live 用例就是这么修的（拷到 `<tmp>/ws/live/` 并设 `workspace="live"`）。
-- **为什么没直接改**：让每个实例自动拿唯一 workspace 会把文件路径改掉（`workspace` 参与拼路径），等于悄悄搬库；而 monkeypatch 共享字典属于和上游实现绑死。
-- **候选**：
-  1. 在 `init_rag` 里做「冲突即自动隔离」：检测到同 workspace 不同目录时，复制/软链数据到 `<working_dir>/<auto-id>/` 并改写 `config.workspace`；
-  2. 向上游提 issue（多实例同 workspace 是合理用法，应该由 `need_init` 判断库目录是否一致）；
-  3. 干脆在 graphkb 层定死「一个进程一个库」并写进接口契约（当前 warning 就是这条路的雏形）。
+- **改法**：`graphkb/rag.py::_isolate_shared_kv`，在 `init_rag` 里跑。判定不看「谁先谁后」而看**内容**：把我的磁盘文件读出来，若共享字典里缺我文件中的键（`set(mine) - set(data)` 非空），说明那份共享数据不属于我，把 `_data` 换成本实例自己的字典——读自己的文件、写也只落自己的目录；若共享字典已包含我全部键（同库重复建实例），什么都不动，保持上游共享语义。真图 live 用例已改回 `workspace=""`，靠它自动隔离跑通（日志：`8 个 KV 存储改用本实例自己的数据副本`）。
+- **代价/边界**：被隔离的实例不再与其它实例共享内存（本来也指向不同目录，共享才是错的）；多进程 `initialize_share_data` 那套协议不参与（graphkb 目前单进程）。
+- **还剩下的**：这是 graphkb 层的补丁，不是上游修复。可以向上游提 issue：多实例同 workspace 是合理用法，应该由 `need_init` 比对库目录而不是只看 namespace。
