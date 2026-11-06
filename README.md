@@ -102,7 +102,7 @@ python -m graphkb.cli serve --port 8001 --reload            # 换端口 / 后端
 ## 6. 验证
 
 ```bash
-python -m pytest -q                                   # 单元测试（当前 104 passed，全程离线，LLM/embedding 走 mock）
+python -m pytest -q                                   # 单元测试（当前 118 passed，全程离线，LLM/embedding 走 mock）
 python holdout/evaluate.py slice-7-retrieval-visualization --version slice-7-v1
 python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slice-8-v1
 ```
@@ -119,6 +119,7 @@ graphkb/
   ingest.py      # 文档 -> 图（增量、实体对齐）
   documents.py   # 文档生命周期：列表 / 覆盖更新 / 删除后图收敛
   merge.py       # 显式合并实体（复用 LightRAG amerge_entities）
+  provenance.py  # 溯源标签：origin（extracted/manual/mixed/unknown）+ 来源文档（从 source_id / chunk 存储读出来）
   query.py       # 检索 + 命中分层（锚点 / 答案引用 / 最短路）-> trace
   render.py      # 把 trace 渲染成 CLI 可读的透明窗
   server.py      # FastAPI：/api/graph /api/query /api/documents /api/entities ... + 静态托管
@@ -146,6 +147,7 @@ data/            # 库本体（gitignore）
 - **孤立实体不被召回**：图里没有连边的实体不会进入检索结果（LightRAG dual-level 检索的固有行为，见 [`idsd/backlog.md`](<idsd/backlog.md>) 条目 4）。
 - **图长大后「簇」信号会退化**：现在靠「锚点 + 答案引用 + 最短路」定高亮；若图长成单个大连通分量，簇数就失去区分意义，只剩前两者有效。
 - **前端色温/形态档位写死**：`frontend/src/main.ts` 里的轮次配色与环形态是常量，没做成配置项（跨 TS/Python 边界，收益低，明确后置）。
+- **溯源只到「有没有人碰过」**：`origin` 能分出抽取 / 人工 / 混合，但分不出「谁在什么时候改的」；也没有“抽取后又被人改回去了”这种历史（要真审计日志，不在个人底座阶段）。
 - **URL 抓取未做**：S8 只做了本地文件解析；网页抓取涉及 SSRF/超时/正文抽取，需单独切片。
 - **没有鉴权**：`serve` 只该绑 `127.0.0.1`，别指望它挡人。CI 只覆盖 pytest 与前端构建（`.github/workflows/ci.yml`），**不覆盖 holdout**——那要跑真模型，成本与稳定性都不适合放 CI。
 
@@ -156,8 +158,7 @@ data/            # 库本体（gitignore）
 | 工具 | 用途 |
 | --- | --- |
 | `memory.search` | 检索：锚点取 `context.query`、证据取 `context.task`，回 `answer_context`（唯一建议注入的）+ `spill_refs`（溢出可取回）+ `hits`/`trace`（只供审计）+ `degraded`/`reason` |
-| `memory.expand` | 把 `spill_refs` 里的引用取回原文（`entity:张三` / `relation:A->B` / `chunk:c1`） |
-| `memory.ingest` | 写入：默认异步，回 `job_id`（一次抽取约 28s，不能堵住 agent） |
+| `memory.expand` | 把 `spill_refs` 里的引用取回原文（`entity:张三` / `relation:A->B` / `chunk:c1`） || `memory.ingest` | 写入：默认异步，回 `job_id`（一次抽取约 28s，不能堵住 agent） |
 | `memory.ingest_status` | 查写入进度（`queued\|running\|done\|error\|unknown`） |
 
 启动（scope 在启动时绑定，工具参数里没有团队/群/域）：
@@ -184,6 +185,7 @@ graphkb-mcp --workspace ws-personal          # 或 --workspace ws-team-fangjin
 
 - **`answer_context` 与 `trace` 分家**：前者预算内、可以注入 agent 上下文；后者完整、只给人看。看得见 ≠ 塞进去（防“把所有 observation 都糊进 prompt”那种死法）。
 - **Inline & Spill**：预算内进 `answer_context`；装不下的**不丢**，变成 `spill_refs`（`{ref, kind, summary, tokens}`，摘要不占注入预算），需要时 `memory.expand` 取回。引用是**无状态的**（直接指向图与块存储），所以 server 重启、换会话都能取——代价是库里删了就取不到，此时如实报 `missing` 而不编。
+- **溯源跟着内容走**：`hits` 里每个实体/关系、`expand` 取回的每一条都带 `origin`（`extracted`/`manual`/`mixed`/`unknown`）与 `provenance{docs,chunks,unresolved}`——agent 能分清“从文档里读到的”和“人手工断言的”，这是置信度的地基。读图挂了就回 `unknown`，不假称有来源。
 - **预算透传**：`budget={top_k, max_hops, max_paths, max_context_tokens}` 会落到 `RetrievalConfig`；`trace.budget_used` 回 `context_used / context_inline / context_spilled / spilled_tokens`，溢出时 `reason="budget_truncated"`，不静默丢。
 - **降级必须显式**：`texts_equal` / `vdb_error` / `no_anchor` / `vector_fallback` / `budget_truncated` 任一命中 → `degraded=true` + `reason`，agent 据此降低对结果的信任。
 - **`context.query` 与 `context.task` 不要给同一段文本**：两者相等时证据层会塔成空（锚点把证据全吃掉），此时会退回人类面语义并回 `reason="texts_equal"`。
@@ -192,7 +194,7 @@ graphkb-mcp --workspace ws-personal          # 或 --workspace ws-team-fangjin
 
 依赖锁：`mcp>=2.3.0,<3`。依据是 2026-11-04 实测——`mcp-types` 的 `HANDSHAKE_PROTOCOL_VERSIONS` 含 `2025-11-25`（Cola 侧报的版本），裸 JSON-RPC 探针确认 `initialize` 原样回显、未降级，且工具名合规字符集含点号（SEP-986），`memory.search` 合法。`graphkb-mcp` 启动时会再自检一次协议支持，`tests/test_mcp.py` 也有对应断言——哪天 SDK 撤了 handshake 版协议，这里先报错，而不是等 agent 调不通才发现。
 
-已知边界：任务表在进程内存里（server 重启 `job_id` 即失效）；`origin`（溯源标签）只记录不落库，等 M4；`spill_refs` 能取回的只有“还在库里”的东西（实体/边/chunk 被删就报 `missing`）；token 数是粗估（CJK 按 1 字 ≈ 1 token，ASCII 按 4 字符 ≈ 1 token），偏保守不偏激进；暂无鉴权，只适合本机 stdio。
+已知边界：任务表在进程内存里（server 重启 `job_id` 即失效）；`memory.ingest` 的 `origin` 参数（`doc`/`session`/`note`）目前只回显不落库——它与图上的 `origin`（`extracted`/`manual`）不是同一个维度：后者由 LightRAG 的 `source_id` 判定，前者是“记忆从哪来”；`spill_refs` 能取回的只有“还在库里”的东西（实体/边/chunk 被删就报 `missing`）；token 数是粗估（CJK 按 1 字 ≈ 1 token，ASCII 按 4 字符 ≈ 1 token），偏保守不偏激进；暂无鉴权，只适合本机 stdio。
 
 ## 11. 安全注意
 

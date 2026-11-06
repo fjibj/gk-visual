@@ -1,7 +1,7 @@
 import cytoscape from 'cytoscape'
 import coseBilkent from 'cytoscape-cose-bilkent'
 import './style.css'
-import { api, GraphData, DocumentInfo, HitLayers, RetrievedInfo } from './api'
+import { api, GraphData, DocumentInfo, HitLayers, RetrievedInfo, Origin, Provenance } from './api'
 
 cytoscape.use(coseBilkent)
 
@@ -54,13 +54,53 @@ function ringOf(ele: any): RingSpec {
   return base
 }
 
+const MANUAL_COLOR = '#8250df'
+
+/** 「这条是怎么来的」→ 一句人话。四态与后端 provenance.ORIGIN_* 一一对应。 */
+function originLabel(origin?: string): string {
+  switch (origin) {
+    case 'manual':
+      return '人工创建'
+    case 'mixed':
+      return '文档抽取 + 人工改动'
+    case 'extracted':
+      return '文档抽取'
+    default:
+      return '来源未知（库里没有来源记录）'
+  }
+}
+
+function isManual(origin?: string): boolean {
+  return origin === 'manual' || origin === 'mixed'
+}
+
+function provenanceHtml(origin?: Origin, prov?: Provenance): string {
+  const p = prov || { manual: false, docs: [], doc_ids: [], chunks: 0, unresolved: 0 }
+  const parts: string[] = [`<div class="prov-origin">${escapeHtml(originLabel(origin))}</div>`]
+  if (p.docs.length) {
+    const docs = p.docs.map((d) => escapeHtml(d)).join('、')
+    parts.push(`<div class="prov-docs">来源文档：${docs}（${p.chunks} 块）</div>`)
+  } else if (p.manual) {
+    parts.push('<div class="prov-docs">没有关联文档：内容是人直接写进图的</div>')
+  } else if (p.chunks === 0) {
+    parts.push('<div class="prov-docs">库里的记录没有保留来源</div>')
+  }
+  if (p.unresolved > 0) {
+    parts.push(
+      `<div class="prov-warn">另有 ${p.unresolved} 块内容已无据可查（所属文档被覆盖或删除）</div>`,
+    )
+  }
+  return `<label>来源</label><div class="prov-box">${parts.join('')}</div>`
+}
+
 const cy = cytoscape({
   container: document.getElementById('cy')!,
   style: [
     {
       selector: 'node',
       style: {
-        label: (ele: any) => `${ele.data('id')}${ele.data('hitSup') || ''}`,
+        label: (ele: any) =>
+          `${ele.data('id')}${ele.data('manualMark') || ''}${ele.data('hitSup') || ''}`,
         'background-color': (ele) => typeColor(String(ele.data('type'))),
         color: '#1f2328',
         'text-valign': 'bottom',
@@ -114,6 +154,24 @@ const cy = cytoscape({
       selector: '.dimmed',
       style: {
         opacity: 0.2,
+      },
+    },
+    {
+      selector: 'node.manual',
+      style: {
+        // 人工味儿用「底晕」而不是边框：边框通道已经被检索分层占用了（实线=锚点/虚线=引用）
+        'underlay-color': MANUAL_COLOR,
+        'underlay-opacity': 0.16,
+        'underlay-padding': 5,
+        'underlay-shape': 'ellipse',
+      },
+    },
+    {
+      selector: 'edge.manual',
+      style: {
+        'underlay-color': MANUAL_COLOR,
+        'underlay-opacity': 0.22,
+        'underlay-padding': 3,
       },
     },
     {
@@ -174,7 +232,14 @@ async function loadGraph() {
 
 function renderGraph(data: GraphData) {
   const nodes = data.nodes.map((n) => ({
-    data: { id: n.id, type: n.type, description: n.description },
+    data: {
+      id: n.id,
+      type: n.type,
+      description: n.description,
+      origin: n.origin || 'unknown',
+      manualMark: isManual(n.origin) ? ' ✎' : '',
+    },
+    classes: isManual(n.origin) ? 'manual' : '',
   }))
   const edges = data.edges.map((e, i) => ({
     data: {
@@ -183,7 +248,9 @@ function renderGraph(data: GraphData) {
       target: e.target,
       description: e.description,
       keywords: e.keywords,
+      origin: e.origin || 'unknown',
     },
+    classes: isManual(e.origin) ? 'manual' : '',
   }))
   cy.elements().remove()
   cy.add(nodes)
@@ -199,6 +266,23 @@ function renderGraph(data: GraphData) {
     padding: 50,
   } as any).run()
   if (queryRounds.length > 0) renderQueryHighlight()
+  renderProvLegend()
+}
+
+/** ✎ 图例：图里有人工痕迹时才出现，不占无谓的版面 */
+function renderProvLegend() {
+  const el = document.getElementById('prov-legend')
+  if (!el) return
+  const hasManual = cy.elements('.manual').length > 0
+  if (!hasManual) {
+    el.classList.add('hidden')
+    el.innerHTML = ''
+    return
+  }
+  el.innerHTML =
+    `<div class="lg-row"><span class="lg-mark" style="color:${MANUAL_COLOR}">✎</span>` +
+    `人工创建 / 改过（紫色底晕）</div>`
+  el.classList.remove('hidden')
 }
 
 // ---- 详情面板 ----
@@ -262,6 +346,7 @@ function showNodePanel(id: string) {
   showPanel(
     `实体：${id}`,
     `
+      ${provenanceHtml(node.origin, node.provenance)}
       <label>类型</label>
       <input id="f-type" value="${escapeHtml(node.type)}" />
       <label>描述</label>
@@ -286,6 +371,7 @@ function showEdgePanel(source: string, target: string) {
   showPanel(
     `关系：${source} → ${target}`,
     `
+      ${provenanceHtml(edge.origin, edge.provenance)}
       <label>描述</label>
       <textarea id="f-desc">${escapeHtml(edge.description)}</textarea>
       <label>关键词</label>

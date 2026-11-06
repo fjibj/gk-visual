@@ -8,7 +8,7 @@
   P3 注入与审计分离：`answer_context`（预算内、可注入） ≠ `trace`（完整、只供审计）
   P4 预算是展示预算：超限如实截断并计数，不静默丢弃
   P5 降级要诚实：`degraded` + `reason` 一起回，让调用方自己决定信多少
-  P6 溯源字段先留位：`origin` 恒为 None，等 M4 落地
+  P6 溯源可见：`hits` 与 `expand` 都带 `origin`（extracted|manual|mixed|unknown）+ 来源文档（M4）
 """
 
 from __future__ import annotations
@@ -20,6 +20,15 @@ from dataclasses import dataclass, field
 
 from .config import Config, RetrievalConfig
 from .documents import slugify, upsert_document
+from .provenance import (
+    NON_CHUNK_REFS,
+    ORIGIN_EXTRACTED,
+    ORIGIN_UNKNOWN,
+    Provenance,
+    annotate,
+    for_entities,
+    for_relations,
+)
 from .query import query
 
 try:  # 只是为把 LightRAG 的多段描述拆开显示；拿不到就按约定值兜底
@@ -130,6 +139,27 @@ def _plain(text: str) -> str:
 
 def _layer_rank(layer: str | None) -> int:
     return {"anchor": 0, "cited": 1, "path": 2, "direct": 0}.get(layer or "", 9)
+
+
+def _with_provenance(item: dict, prov: Provenance | None) -> dict:
+    """给命中项贴上 `origin` 和 `provenance`；查不到就老实回 unknown（不省字段）。"""
+    p = prov or Provenance()
+    return {**item, "origin": p.origin, "provenance": p.as_dict()}
+
+
+def _chunk_provenance(row: dict) -> dict:
+    """块的溯源：它本身就属于某篇文档，所以恒为 extracted，不用去图里反查。"""
+    doc_id = str(row.get("full_doc_id") or "")
+    file_path = str(row.get("file_path") or "")
+    title = file_path if file_path not in NON_CHUNK_REFS else doc_id
+    p = Provenance(
+        origin=ORIGIN_EXTRACTED,
+        manual=False,
+        docs=[title] if title else [],
+        doc_ids=[doc_id] if doc_id else [],
+        chunks=1,
+    )
+    return {"origin": p.origin, "provenance": p.as_dict()}
 
 
 # ---------------------------------------------------------------- Inline & Spill
@@ -388,9 +418,28 @@ class MemoryTools:
             reasons.append("vector_fallback")
             warnings.append("问题里没有字面实体名，锚点靠向量兜底选出——可靠性下降，别当强证据。")
 
-        entities = [{**e, "origin": None} for e in trace.get("entities", [])]
-        relationships = [{**r, "origin": None} for r in trace.get("relationships", [])]
+        entities = list(trace.get("entities", []))
+        relationships = list(trace.get("relationships", []))
         chunks = list(trace.get("chunks", []))
+
+        # M4 溯源标签：给命中项贴上「从文档抽的 / 人手工加的」与来源文档。
+        # 读图失败不能让检索倒掉——拿不到就当 unknown，但要在 warnings 里说清。
+        try:
+            ent_prov = await for_entities(self.rag, [str(e.get("name") or "") for e in entities])
+            rel_prov = await for_relations(
+                self.rag, [(str(r.get("src") or ""), str(r.get("tgt") or "")) for r in relationships]
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memory.search 溯源查询失败：%s: %s", type(exc).__name__, exc)
+            ent_prov, rel_prov = {}, {}
+            warnings.append(
+                "溯源查询失败：本次 hits 的 origin 一律为 unknown，不代表这些内容没有来源。"
+            )
+        entities = [_with_provenance(e, ent_prov.get(str(e.get("name") or ""))) for e in entities]
+        relationships = [
+            _with_provenance(r, rel_prov.get(f"{r.get('src')}->{r.get('tgt')}"))
+            for r in relationships
+        ]
 
         if result.trace_hit:
             bundle = build_answer_context(entities, relationships, chunks, b.max_context_tokens)
@@ -476,16 +525,20 @@ class MemoryTools:
 
         items: list[dict] = []
         missing: list[dict] = []
+        pending: list[tuple[dict, dict]] = []  # (item, 原始图记录) —— 攒起来一次算溯源
         for raw in refs:
             ref = str(raw).strip()
             kind, _, key = ref.partition(":")
             text: str | None = None
             reason: str | None = None
+            extra: dict = {}
+            record: dict | None = None
             try:
                 if kind == "entity":
                     node = await self.rag.chunk_entity_relation_graph.get_node(key)
                     if node:
                         text = _entity_text(key, node)
+                        record = node
                     else:
                         reason = "图里没有这个实体（可能已删除或改名）"
                 elif kind == "relation":
@@ -496,12 +549,14 @@ class MemoryTools:
                         edge = await self.rag.chunk_entity_relation_graph.get_edge(src, tgt)
                         if edge:
                             text = _relation_text(src, tgt, edge)
+                            record = edge
                         else:
                             reason = "图里没有这条关系（可能两端改名或边已删）"
                 elif kind == "chunk":
                     row = await self.rag.text_chunks.get_by_id(key)
                     if row:
                         text = str(row.get("content") or "")
+                        extra = _chunk_provenance(row)
                     else:
                         reason = "块存储里没有这个 chunk（所属文档可能被覆盖或删除）"
                 else:
@@ -518,8 +573,30 @@ class MemoryTools:
                 keep = max(1, int(len(text) * cap / max(tokens, 1)))
                 text = text[:keep] + "…"
             items.append(
-                {"ref": ref, "kind": kind, "text": text, "tokens": tokens, "truncated": truncated}
+                {
+                    "ref": ref,
+                    "kind": kind,
+                    "text": text,
+                    "tokens": tokens,
+                    "truncated": truncated,
+                    **extra,
+                }
             )
+            if record is not None:
+                pending.append((items[-1], record))
+
+        # M4：取回的内容也带上来来源（读的是同一条图记录，与 /api/graph 不会两处各说一套）
+        if pending:
+            try:
+                provs = await annotate(self.rag, [rec for _, rec in pending])
+                for (item, _), p in zip(pending, provs):
+                    item["origin"] = p.origin
+                    item["provenance"] = p.as_dict()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("memory.expand 溯源查询失败：%s: %s", type(exc).__name__, exc)
+                for item, _ in pending:
+                    item["origin"] = ORIGIN_UNKNOWN
+                    item["provenance"] = Provenance().as_dict()
         return {"items": items, "missing": missing, "version": API_VERSION}
 
     # ---- memory.ingest ----
@@ -550,7 +627,8 @@ class MemoryTools:
         job = Job(job_id=job_id, doc_id=slugify(doc_title), origin=str(origin or "extracted"))
         if job.origin != "extracted":
             job.warnings.append(
-                f"origin={job.origin} 目前只记录不落库：溯源标签（M4 / backlog#9）还没做"
+                f"origin={job.origin} 是「这段记忆从哪来」的文档级标签，当前只回显不落库；"
+                "图上的节点/边溯源（extracted/manual）由 provenance 另行判定。"
             )
         self._register(job)
 

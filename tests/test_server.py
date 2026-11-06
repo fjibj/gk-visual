@@ -118,3 +118,28 @@ def test_query_missing_question(mock_config):
     with make_client(mock_config) as client:
         r = client.get("/api/query")
         assert r.status_code == 422
+
+
+# ---- M4：/api/graph 透传溯源 ----
+
+
+def test_graph_marks_manual_origin(mock_config):
+    """人工建的实体/边必须被标成 manual，且带 provenance 字段（前端与 agent 同一个契约）。"""
+    with make_client(mock_config) as client:
+        client.post("/api/entities", json={"name": "张三", "type": "person", "description": "工程师"})
+        client.post("/api/entities", json={"name": "字节跳动", "description": "公司"})
+        client.post("/api/relations", json={"source": "张三", "target": "字节跳动", "description": "任职"})
+        g = client.get("/api/graph").json()
+
+    node = next(n for n in g["nodes"] if n["id"] == "张三")
+    assert node["origin"] == "manual"
+    assert node["provenance"] == {
+        "manual": True,
+        "docs": [],
+        "doc_ids": [],
+        "chunks": 0,
+        "unresolved": 0,
+    }
+    edge = g["edges"][0]
+    assert edge["origin"] == "manual"
+    assert edge["provenance"]["manual"] is True

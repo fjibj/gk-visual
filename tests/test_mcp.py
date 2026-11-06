@@ -26,8 +26,8 @@ class _FakeGraph:
             {"entity_id": "北京", "entity_type": "location", "description": "城市", "source_id": "chunk-1"},
         ] if nodes is None else nodes
         self.edges = [
-            {"source": "张三", "target": "字节跳动", "description": "任职", "keywords": "任职"},
-            {"source": "北京", "target": "字节跳动", "description": "总部位于", "keywords": "总部"},
+            {"source": "张三", "target": "字节跳动", "description": "任职", "keywords": "任职", "source_id": "chunk-1"},
+            {"source": "北京", "target": "字节跳动", "description": "总部位于", "keywords": "总部", "source_id": "chunk-1"},
         ] if edges is None else edges
 
     async def get_all_nodes(self):
@@ -56,6 +56,13 @@ class _FakeGraph:
         return None
 
 
+def _with_doc_fields(row):
+    """假块存储：缺字段时补上文档身份（真 LightRAG 每条 chunk 都有 full_doc_id/file_path）。"""
+    if not row:
+        return row
+    return {**row, "full_doc_id": row.get("full_doc_id", "doc-1"), "file_path": row.get("file_path", "张三简历")}
+
+
 class _FakeTextChunks:
     def __init__(self, rows=None):
         self.rows = rows or {
@@ -64,7 +71,11 @@ class _FakeTextChunks:
         }
 
     async def get_by_id(self, chunk_id):
-        return self.rows.get(str(chunk_id))
+        return _with_doc_fields(self.rows.get(str(chunk_id)))
+
+    async def get_by_ids(self, ids):
+        # 与 LightRAG 一致：顺序对齐，取不到的位置给 None
+        return [_with_doc_fields(self.rows.get(str(i))) for i in ids]
 
 
 class _FakeVdb:
@@ -170,8 +181,10 @@ def test_search_agent_mode_splits_roles_and_skips_answer_llm():
     assert out["version"] == "1"
     assert out["answer_context"], "命中时应给出可注入上下文"
     assert "[anchor] 张三" in out["answer_context"]
-    # 溯源字段先留位（M4 才落地）
-    assert all(e["origin"] is None for e in out["hits"]["entities"])
+    # 溯源（M4）：命中项必须带「从文档抽的 / 人手工加的」与来源文档
+    assert all(e["origin"] == "extracted" for e in out["hits"]["entities"])
+    assert all(e["provenance"]["docs"] == ["张三简历"] for e in out["hits"]["entities"])
+    assert all(r["origin"] == "extracted" for r in out["hits"]["relationships"])
     assert rag.calls == []
 
 
@@ -363,7 +376,7 @@ def test_ingest_manual_origin_warns_it_is_not_persisted():
     tools, _ = _tools()
     out = asyncio.run(tools.ingest(source="note", content="手写内容", origin="manual", wait=True))
     assert out["origin"] == "manual"
-    assert any("M4" in w for w in out["warnings"])
+    assert any("文档级" in w for w in out["warnings"]), out["warnings"]
 
 
 # ---------------------------------------------------------------- 预算与上下文构建
@@ -495,6 +508,68 @@ def test_descriptions_are_flattened_for_reading():
     text = got["items"][0]["text"]
     assert "<SEP>" not in text
     assert "一个人" in text and "工程师" in text
+
+
+# ---------------------------------------------------------------- M4：溯源标签
+
+
+def test_search_marks_manual_entity_and_relation():
+    """人工加的东西在 agent 面也得一眼可辨：origin=mixed/manual + provenance.manual。"""
+    tools, rag = _tools(answer=None)
+    g = rag.chunk_entity_relation_graph
+    # 同一实体被人工改过 -> source_id 里两样都有（LightRAG 编辑后就是这个形状）
+    g.nodes.append(
+        {
+            "entity_id": "张三",
+            "entity_type": "person",
+            "description": "张三是一名工程师",
+            "source_id": "chunk-1<SEP>manual_creation",
+        }
+    )
+    g.edges.insert(
+        0,
+        {
+            "source": "张三",
+            "target": "字节跳动",
+            "description": "任职",
+            "keywords": "任职",
+            "source_id": "manual_creation",
+        },
+    )
+    out = asyncio.run(
+        tools.search({"query": "张三在哪工作", "task": "张三在字节跳动上班，常驻北京"})
+    )
+    ents = {e["name"]: e for e in out["hits"]["entities"]}
+    assert ents["张三"]["origin"] == "mixed"
+    assert ents["张三"]["provenance"]["manual"] is True
+    assert ents["张三"]["provenance"]["docs"] == ["张三简历"]
+    assert ents["北京"]["origin"] == "extracted"
+    rels = {(r["src"], r["tgt"]): r for r in out["hits"]["relationships"]}
+    assert rels[("张三", "字节跳动")]["origin"] == "manual"
+
+
+def test_search_origin_is_unknown_not_none_when_unreadable():
+    """溯源读不到时给 unknown，而不是 null：字段恒在，调用方不用写两种分支。"""
+    tools, rag = _tools(answer=None)
+    rag.chunk_entity_relation_graph.nodes = [
+        {"entity_id": "张三", "entity_type": "person", "description": "工程师"}
+    ]
+    out = asyncio.run(tools.search({"query": "张三在哪工作", "task": "张三在北京上班"}))
+    ent = next(e for e in out["hits"]["entities"] if e["name"] == "张三")
+    assert ent["origin"] == "unknown"
+    assert ent["provenance"]["chunks"] == 0
+
+
+def test_expand_items_carry_provenance():
+    """取回的内容同样带来源——同一份真相，不在两个地方各说一套。"""
+    tools, _ = _tools()
+    out = asyncio.run(tools.expand(["entity:张三", "relation:张三->字节跳动", "chunk:c1"]))
+    by_ref = {i["ref"]: i for i in out["items"]}
+    assert by_ref["entity:张三"]["origin"] == "extracted"
+    assert by_ref["entity:张三"]["provenance"]["docs"] == ["张三简历"]
+    assert by_ref["relation:张三->字节跳动"]["origin"] == "extracted"
+    assert by_ref["chunk:c1"]["origin"] == "extracted"
+    assert by_ref["chunk:c1"]["provenance"]["docs"] == ["张三简历"]
 
 
 # ---------------------------------------------------------------- MCP 适配器接线

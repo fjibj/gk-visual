@@ -77,13 +77,17 @@
 
 ## 9. 实体/边溯源标签（LLM 抽取 vs 手工创建）
 
-- **状态**：候选（用户 2026-08-22 拍板「记下来，后面再做」）。来源：graphify 对比分析。
+- **状态**：**已实现（M4，2026-11-06）**。原为候选（用户 2026-08-22 拍板「记下来，后面再做」），来源：graphify 对比分析。
 - **灵感**：graphify 每条边打 `EXTRACTED`（源码明确存在）/ `INFERRED`（推断）标签，「永远知道哪些是读到的、哪些是猜的」——与本项目约束 2「透明」同源。
-- **内容**：图里区分两类元素并给视觉标记：
-  - **LLM 抽取**：带 `source_id`（指向 chunk），可溯源到原文档；
-  - **手工创建**：无 source_id（`POST /api/entities` 不带 chunk 来源），纯人工录入。
-- **现状盘点**：信息已隐式存在——抽取实体有 `source_id`（`<SEP>` 分隔的 chunk 列表），手工新建的没有；前端未展示这个区别。
-- **实现线索**：后端 `/api/graph` 透传 `source_id` 是否为空（或算个 `origin: extracted|manual` 字段）；前端节点/边加视觉标记（如手工建的加小图标/虚线边框）；详情面板显示溯源（抽取的列出所属文档，可跳转）。零检索改动、零 LLM 成本。
+- **落地方式**：不另存账本，**从 LightRAG 自己留的痕读出来**（`graphkb/provenance.py`）：
+  - 抽取来的：`source_id` = 若干 chunk_id（`<SEP>` 分隔）；
+  - 手工新建的：`source_id` = `"manual_creation"`（LightRAG `utils_graph.acreate_entity/acreate_relation` 的默认哨兵）；
+  - 两者都有（编辑过抽取实体、合并把手工实体并进来）：→ `mixed`。
+- **四种 origin**：`extracted` / `manual` / `mixed` / `unknown`（没有任何来源记录的老数据）。无阈值、无 LLM。
+- **来源文档**：不走节点自己的 `file_path`（老数据里是 `unknown_source`），一律批量查 `rag.text_chunks.get_by_ids` 拿 `full_doc_id`；块已被删的计入 `unresolved`，如实说「这部分已无据可查」。
+- **前端**：人工痕迹 = 标签后缀 `✎` + 紫色底晕（**不用边框**——边框通道已被 S7 的命中分层占用：实线环=锚点、虚线环=引用/路径）；详情面板顶部只读块显示「人工创建 / 文档抽取 + 人工改动」与来源文档；左上角图例只在图里存在人工元素时出现。
+- **契约**：`/api/graph` 的每个 node/edge、`memory.search` 的 `hits`、`memory.expand` 的 `items` 都带 `origin` + `provenance{manual,docs,doc_ids,chunks,unresolved}`。
+- **代价**：只区分到「有没有人碰过」，区分不出「谁、什么时候碰的」——那需要真审计日志，不在本阶段。
 
 ## 10. 路径查询（A 到 B 怎么关联起来）
 
