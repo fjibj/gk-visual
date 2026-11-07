@@ -7,7 +7,14 @@ name = "graphkb"
 version = "0.1.0"
 description = "Transparent, editable personal knowledge base: documents into a knowledge graph, with explainable retrieval hits"
 readme = "README.md"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     # 图引擎：约束 1 要求复用 LightRAG。[api] extra 带来它的解析层
     # （lightrag.parser.legacy.extract_text）与 server 依赖。
