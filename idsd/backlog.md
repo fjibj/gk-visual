@@ -88,6 +88,7 @@
 - **前端**：人工痕迹 = 标签后缀 `✎` + 紫色底晕（**不用边框**——边框通道已被 S7 的命中分层占用：实线环=锚点、虚线环=引用/路径）；详情面板顶部只读块显示「人工创建 / 文档抽取 + 人工改动」与来源文档；左上角图例只在图里存在人工元素时出现。
 - **契约**：`/api/graph` 的每个 node/edge、`memory.search` 的 `hits`、`memory.expand` 的 `items` 都带 `origin` + `provenance{manual,docs,doc_ids,chunks,unresolved}`。
 - **代价**：只区分到「有没有人碰过」，区分不出「谁、什么时候碰的」——那需要真审计日志，不在本阶段。
+- **复评（2026-11-08，外部验收报告提到「origin 只回显不落库」）**：**暂不做**。外挂 provenance 表按实体名做键，会被 S4 的实体合并（改名 + 重指端点 + 删源）与 S5 的改名/删除弄成孤儿；要活下来得在 merge/edit/delete 三条写路径上挂维护钩子——那是给「人能改图」这个核心能力加耦合，撞约束 6（规则预算 ≤ 1）。且「谁在何时改」属审计日志，不在 #9 范围内；时间维度上 `doc_status` 的 `created_at/updated_at` 已能说到「哪篇文档什么时候灌进来的」。决策依据：`idsd/notes/acceptance-review-followup-20261108.md` §6。
 
 ## 10. 路径查询（A 到 B 怎么关联起来）
 
@@ -186,6 +187,7 @@
 - **残留（原）**：`degraded` 在真图上仍是常态（块装不下就是 `budget_truncated`）——溢出不是丢弃，但默认 800 token 对 260 实体这种图偏紧。
 - **后续处置（2026-11-07，按图规模自适应）**：`graphkb/memory_api.py` 新增 `ADAPTIVE_CONTEXT_STEPS`（≤100 实体 → 800 / ≤400 → 1200 / ≤1000 → 1600 / 其余 2000 上限）与 `adaptive_context_tokens()`；`budget_used` 同时报 `graph_nodes` 与 `context_tokens_source`（`adaptive` / `explicit`），显式传参则完全不生效（调用方要可复现）。真图 260 实体同一句 H1：800 → 1200 后 inline 从 34 条 / 734 token 变 **38 条 / 1158**，溢出从 16 块 / 2936 降到 **12 块 / 2512**。真图回归新增三条回放用例（分层省 token、块能挤进注入且溢出的能取回、自适应档位与 `context_tokens_source`）与一条 slow 现场用例（两副本隔离）。细节见 `idsd/notes/m3-inline-spill.md` §8/§9。
 - **残留（现）**：方案 ①（拼接句去重）/ ②（分段截断）未做；真图上 `degraded` 仍会出现，因为单条实体描述本身就长（最长 384 token），而注入不能把预算一个人吃光。
+- **第三轮（2026-11-08，path 层只出关系行）**：上一轮把 path 实体压到「名字 + 类型」，但真图上这类行仍占注入行数的六七成（80 实体夹具：14 行里 4 行；260 实体真图：13 行里 10 行）。中间节点的唯一作用是证明「锚点和引用点连得上」，而 `[path] A -> B［关键词］` 已经说完了，再单列一行是重复——`graphkb/memory_api.py::build_answer_context` 直接跳过 path 层实体。实测：80 实体夹具 14 行 → **10 行**（path 10 行 → 6 行关系行），692 → **649 token**。完整性由回归用例 `test_path_entities_are_visible_through_relation_lines` 钉住（路径上每条跳边都成关系行，所以每个中间节点至少出现在一条关系行里；反证：删光 path 关系行，4 个中间节点全消失）。
 
 ## 19. 同进程里两个实例同 workspace：KV 静默为空
 
@@ -196,3 +198,32 @@
 - **代价/边界**：被隔离的实例不再与其它实例共享内存（本来也指向不同目录，共享才是错的）；多进程 `initialize_share_data` 那套协议不参与（graphkb 目前单进程）。
 - **回归（2026-11-07）**：`tests/test_real_graph.py::test_live_two_workspaces_are_isolated` 开两个真库副本（`workspace=""`），故意在第二个副本的块存储里多塞一块：断言 A 看不见它、B 看得见、两边的溯源都能解开块、且两边 `text_chunks._data` 不是同一个对象。只断言「两边都读得到块」是测不出串台的——两个副本内容本来就一样。
 - **还剩下的**：这是 graphkb 层的补丁，不是上游修复。可以向上游提 issue：多实例同 workspace 是合理用法，应该由 `need_init` 比对库目录而不是只看 namespace。
+
+## 20. 写入任务票跨进程（不是「重启即清空」）
+
+- **状态**：**已实现（2026-11-08）**。来源：外部验收报告（小C《M0–M6 验收报告》）的 P0-2；复核后改的是修法。
+- **现象**：`memory.ingest` 异步回 `job_id`，任务表在 MCP 进程内存里；进程一死 `ingest_status` 就回 `unknown`。报告建议「落 SQLite」。
+- **复核结论（修法不对症）**：活儿不会丢，丢的只是一张票。
+  - LightRAG 1.5.7 的 pipeline 对 `pending/processing/parsing/analyzing` 有 `_AUTO_RESUME_DOC_STATUSES`，会自愈；`doc_status` 本身就在磁盘上。
+  - 现场验证（`_probe_job_restart.py`，真 LLM + 真图副本）：写入跑到「Writing graph」时**强杀进程** → 新进程读盘上 `doc_status` = `processing`；随后随便写一篇新文档，日志出现 `Completed processing file 1/2: 中断实验文档-…`——被中断那篇**被自动续跑并完成**。
+- **落地**：`graphkb/memory_api.py`
+  - `ingest` 建票后立刻把 `job_id → doc_id/title/origin/started_at` 追加进 `working_dir/mcp_jobs[.<workspace>].json`（原子写：tmp + `os.replace`，上限 `JOB_RETENTION=200`，先丢已完成）；写盘失败只记日志，不影响写入。
+  - `ingest_status` 改 async 两级来源：本进程票据 → 落盘票据 + `rag.doc_status.get_by_id(doc_id)`。回 `status_source`（`process`/`store`）与 `doc_status`（库上原状态），词表仍是 `queued|running|done|error|unknown`。
+  - 修了一个真 bug：`doc_status` 行在进程内是新写的 **`DocStatus` 枚举**、从盘上读回来才是字符串，`str()` 一下变成 `DocStatus.PROCESSED` 与词表对不上（现场验证时撞到）。
+- **为什么不用 SQLite**：票据只有一层映射关系，JSON 足够；引入 SQLite 要管写入一致性、迁移、文件生命周期，而状态真值本来就在 LightRAG 那边。
+- **回归**：`tests/test_mcp.py` 五条（票据落盘 → 新实例查得到；库上说 analyzing 就不许报 done；failed 带原因；库上没了报 unknown；workspace 分开存）+ 一条枚举形态用例。测试一律给临时 `working_dir`，不往仓库 `./data` 里丢垃圾。
+
+## 21. token 粗估的误差方向（记录，不做精确化）
+
+- **状态**：**记录，不实现**（2026-11-08）。来源：同份验收报告的「两个提醒」之一，复核后方向反了。
+- **实测**（cl100k_base）：纯中文几乎 1:1（30 字 → 30 token；106 字 → 100）；带 ASCII 标识符的混排文本 **粗估少算约 11%**（952 字：粗估 676 / 实际 758）。报告说「实际中文 1.5–2 字/token → 注入偏少」，只在 Qwen/DeepSeek 那类 tokenizer 上成立。
+- **判断**：误差方向取决于调用方的 tokenizer，而 agent 侧根本不确定；为此引 tokenizer 依赖换不来确定性。写进 README §9 当已知边界（±20% 水位），不动代码。
+
+## 22. 签切片前的本地 preflight（holdout 不进 CI 的替代）
+
+- **状态**：**已实现（2026-11-08）**。来源：同份报告的「CI 不覆盖 holdout」，但它的解法（定时任务）做不到——holdout 要真 LLM + 真 embedding，塞 key 违反本仓库安全底线。
+- **工具**：`python scripts/preflight.py [--holdout <切片> ...] [--holdout-version V] [--skip-slow] [--skip-frontend] [--list]`
+  - 依次跑：`pytest -m "not slow"` → `pytest -m slow`（真库副本 + 真模型）→ 指定切片的 holdout → 前端构建 → git 体检（脏工作树 / 没推的提交 / HEAD 上的 tag）；
+  - 每步打印命令、末 12 行输出与耗时，最后一张 PASS/FAIL 表，有失败就退出码 1。
+- **分工**：CI 管离线那一半（每次 push）；preflight 管需要模型/真库的那一半（签收前本机跑）。S3 holdout 腐烂 12 天的教训靠这个兜。
+- **已实测**：`--holdout slice-3-retrieval-transparency --holdout-version preflight-smoke` → 7/7 通过（结果目录跑完即清，不进仓库）。

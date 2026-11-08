@@ -103,11 +103,21 @@ python -m graphkb.cli trigger plan "帮我整理张三的入职材料"    # 抬�
 ## 6. 验证
 
 ```bash
-python -m pytest -q                                   # 单元 + 真图回归（当前 196 passed，全程离线，LLM/embedding 走 mock）
+python -m pytest -q                                   # 全部（当前 203 passed：201 离线 + 2 条现场，LLM/embedding 走 mock）
 python -m pytest -q -m "not slow"                      # 跳过需要真库 + Ollama 的现场用例（CI 里自动 skip）
 python holdout/evaluate.py slice-7-retrieval-visualization --version slice-7-v1
 python holdout/evaluate.py slice-8-document-ingestion-enhancement --version slice-8-v1
+
+# 签切片 / 打 tag 前的检查单（一条命令跑完，省得靠记性）
+python scripts/preflight.py                              # 离线测试 + 现场测试 + git 体检
+python scripts/preflight.py --holdout slice-3-retrieval-transparency --holdout-version v0.10.1
+python scripts/preflight.py --list                       # 有哪些切片可以跑 holdout
 ```
+
+**职责分工**：CI（`.github/workflows/ci.yml`）跑离线那一半（单元 + 真图回放 + 前端构建），
+每次 push 都跑；holdout 与现场用例要真 LLM + 真 embedding，塞 key 违反本仓库的安全底线，
+所以落到 `scripts/preflight.py`，**签收之前在本机跑一遍**。教训的来源很具体：`_hit_trace` 改签名之后，
+S3 的 holdout 坏了 12 天没人发现——因为没人跑它。
 
 **真图回归**（`tests/test_real_graph.py`）：不只拿 4~5 个节点的玩具图测，而是用一张真图夹具把 **M1–M5 逐层压一遍**——
 双文本判据（M1）、`memory.search` 的面与降级（M2）、Inline & Spill → `memory.expand` 闭环（M3）、
@@ -142,6 +152,8 @@ frontend/
   src/main.ts    # Cytoscape 图 + 检索高亮 + 编辑面板（无框架，原生 TS）
   src/api.ts     # 后端契约类型
 tests/           # pytest，LLM/embedding 走 mock，不联网
+scripts/         # 运维工具：preflight（签切片前的本地检查单）、verify_job_resume（任务票跨进程的现场验证）、
+                 #            demo_agent_memory（端到端演示）、capture_real_fixture（录真图夹具，默认脱敏）
 holdout/         # 考卷（见 §6）
 idsd/            # 方法论记录：intents / plans / checkpoints / notes / backlog
 data/            # 库本体（gitignore）
@@ -163,11 +175,12 @@ data/            # 库本体（gitignore）
 - **前端色温/形态档位写死**：`frontend/src/main.ts` 里的轮次配色与环形态是常量，没做成配置项（跨 TS/Python 边界，收益低，明确后置）。
 - **溯源只到「有没有人碰过」**：`origin` 能分出抽取 / 人工 / 混合，但分不出「谁在什么时候改的」；也没有“抽取后又被人改回去了”这种历史（要真审计日志，不在个人底座阶段）。
 - **URL 抓取未做**：S8 只做了本地文件解析；网页抓取涉及 SSRF/超时/正文抽取，需单独切片。
-- **没有鉴权**：`serve` 只该绑 `127.0.0.1`，别指望它挡人。CI 只覆盖 pytest 与前端构建（`.github/workflows/ci.yml`），**不覆盖 holdout**——那要跑真模型，成本与稳定性都不适合放 CI。
+- **没有鉴权**：`serve` 只该绑 `127.0.0.1`，别指望它挡人。CI 只覆盖 pytest 与前端构建（`.github/workflows/ci.yml`），**不覆盖 holdout**——那要跑真模型，成本与稳定性都不适合放 CI；要跑就本地 `python scripts/preflight.py --holdout <切片>`（见 §6）。
 - **同进程多个库已自动隔离**：LightRAG 的 KV 存储挂在进程级共享字典（`_shared_dicts[workspace:namespace]`）上，"谁负责从磁盘加载"只是个全局标志。后果是第二个实例的 `text_chunks` / `full_docs` 会静静地为空（图还能读，因为 GraphML 是每实例自己读文件）。`graphkb/rag.py::_isolate_shared_kv` 在初始化后按**内容**判定：我的文件里有、共享字典里没有 → 把这个存储换成本实例自己的副本（读自己的文件、写也只落自己的目录）；同库重复建实例则保持上游共享。彻底避开还是给每个库不同 `GKB_WORKSPACE`。
-- **注入预算在真图上是瓶颈（已缓解，未消失）**：260 实体的真图上，一段话的命中往往就有 10~13 行注入，其中过半是 `[path]` 中间节点。现在按层分预算（anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%，path 只带名字 + 类型，份额是软上限）：同样 800 token，装进去的条目从 9 条变成 34 条，溢出从 41 条 / 4380 token 降到 16 条 / 2936。
+- **注入预算在真图上是瓶颈（已缓解两轮，未消失）**：260 实体的真图上，一段话的命中往往就有 13 行注入，其中 10 行是 `[path]` 中间节点。第一轮按层分预算（anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%，份额是软上限）：同样 800 token，装进去的条目从 9 条变成 34 条，溢出从 41 条 / 4380 token 降到 16 条 / 2936。第二轮（2026-11-08）把 **path 层的实体行整体去掉**——中间节点的唯一作用是证明“锚点和引用点连得上”，而这件事 `[path] A -> B［关键词］` 已经说完了，再单列一行“名字（类型）”是重复：80 实体夹具上注入从 14 行降到 10 行（path 10 行 → 6 行），692 → 649 token；要中间节点的描述仍然能 `entity:` 取。
 预算还会按图规模取档（≤100 实体 800 / ≤400 → 1200 / ≤1000 → 1600 / 其余 2000 封顶），显式传 `budget.max_context_tokens` 则完全不生效；到底用了哪档由 `budget_used.context_tokens_source` 交代（`adaptive` / `explicit`）。真图 260 实体上从 800 提到 1200 后，inline 从 34 条 / 734 token 变成 38 条 / 1158，溢出从 16 块降到 12 块。
-块仍不是全能装下，所以 `reason=budget_truncated` 在真图上是常态——那是溢出不是丢弃（引用都在 `spill_refs`），但 `degraded` 在真图上别当异常告警读。细节：[`idsd/notes/m3-inline-spill.md`](<idsd/notes/m3-inline-spill.md>) §7/§8。
+块仍不是全能装下，所以 `reason=budget_truncated` 在真图上是常态——那是溢出不是丢弃（引用都在 `spill_refs`），但 `degraded` 在真图上别当异常告警读。细节：[`idsd/notes/m3-inline-spill.md`](<idsd/notes/m3-inline-spill.md>) §7/§8/§10。
+- **token 是粗估，误差与调用方 tokenizer 有关**：`estimate_tokens` 按“CJK 1 字 ≈ 1 token、ASCII 4 字符 ≈ 1 token”算。实测（cl100k）纯中文几乎 1:1（30 字 → 30），但带 ASCII 标识符的混排文本少算约 11%（952 字 → 粗估 676 / 实际 758），而 Qwen/DeepSeek 这类 tokenizer 又会往相反方向偏。不为此引入 tokenizer 依赖——但预算判断要知道有 ±20% 的水位。
 
 ## 10. Agent 记忆面（MCP，已实现）
 
@@ -176,7 +189,7 @@ data/            # 库本体（gitignore）
 | 工具 | 用途 |
 | --- | --- |
 | `memory.search` | 检索：锚点取 `context.query`、证据取 `context.task`，回 `answer_context`（唯一建议注入的）+ `spill_refs`（溢出可取回）+ `hits`/`trace`（只供审计）+ `degraded`/`reason` || `memory.expand` | 把 `spill_refs` 里的引用取回原文（`entity:张三` / `relation:A->B` / `chunk:c1`） || `memory.ingest` | 写入：默认异步，回 `job_id`（一次抽取约 28s，不能堵住 agent） |
-| `memory.ingest_status` | 查写入进度（`queued\|running\|done\|error\|unknown`） |
+| `memory.ingest_status` | 查写入进度（`queued\|running\|done\|error\|unknown`）；**跨进程可查**：本进程没这张票时，状态以落盘票据 + 库上 `doc_status` 为准 |
 
 启动（scope 在启动时绑定，工具参数里没有团队/群/域）：
 
@@ -203,6 +216,7 @@ graphkb-mcp --workspace ws-personal          # 或 --workspace ws-team-fangjin
 - **`answer_context` 与 `trace` 分家**：前者预算内、可以注入 agent 上下文；后者完整、只给人看。看得见 ≠ 塞进去（防“把所有 observation 都糊进 prompt”那种死法）。
 - **Inline & Spill**：预算内进 `answer_context`；装不下的**不丢**，变成 `spill_refs`（`{ref, kind, summary, tokens}`，摘要不占注入预算），需要时 `memory.expand` 取回。引用是**无状态的**（直接指向图与块存储），所以 server 重启、换会话都能取——代价是库里删了就取不到，此时如实报 `missing` 而不编。
 - **块只在与命中实体有来源交集时进注入**：向量召回的块（`top_k`）不等于命中，与锚点/证据点毫无来源交集的块塞进上下文就是拿预算买噪声。被挡下的仍在 `hits.chunks`（标 `linked=false`），warnings 里说清几块；`memory.expand` 仍可按 `chunk:<id>` 取回。
+- **任务票绝不过夜**：MCP 是 stdio，**每个 agent 会话就是一个新进程**，`job_id` 靠内存活不过去。所以 `memory.ingest` 会先把 `job_id → doc_id` 落一行小 JSON（`working_dir/mcp_jobs*.json`，有 workspace 时带后缀分开存），查不到内存票时再去读库上的 `doc_status`。而**活儿本来就不会丢**：LightRAG 对 `pending/processing/parsing/analyzing` 的文档会自动续跑（现场验证过：写到一半被杀，下一次写入把它顺带跑完）。所以 `status_source` 会告诉你是 `process`（本进程的票）还是 `store`（来自磁盘），`doc_status` 给你库上的原状态。
 - **溯源跟着内容走**：`hits` 里每个实体/关系、`expand` 取回的每一条都带 `origin`（`extracted`/`manual`/`mixed`/`unknown`）与 `provenance{docs,chunks,unresolved}`——agent 能分清“从文档里读到的”和“人手工断言的”，这是置信度的地基。读图挂了就回 `unknown`，不假称有来源。
 - **预算透传**：`budget={top_k, max_hops, max_paths, max_context_tokens}` 会落到 `RetrievalConfig`；`trace.budget_used` 回 `context_used / context_inline / context_spilled / spilled_tokens / context_by_layer / graph_nodes / context_tokens_source`，溢出时 `reason="budget_truncated"`，不静默丢。不给 `max_context_tokens` 时按图规模取档（见 §9），并在 `context_tokens_source` 里说是 `adaptive` 还是 `explicit`。
 - **降级必须显式**：`texts_equal` / `vdb_error` / `no_anchor` / `vector_fallback` / `budget_truncated` 任一命中 → `degraded=true` + `reason`，agent 据此降低对结果的信任。
@@ -212,7 +226,7 @@ graphkb-mcp --workspace ws-personal          # 或 --workspace ws-team-fangjin
 
 依赖锁：`mcp>=2.3.0,<3`。依据是 2026-11-04 实测——`mcp-types` 的 `HANDSHAKE_PROTOCOL_VERSIONS` 含 `2025-11-25`（Cola 侧报的版本），裸 JSON-RPC 探针确认 `initialize` 原样回显、未降级，且工具名合规字符集含点号（SEP-986），`memory.search` 合法。`graphkb-mcp` 启动时会再自检一次协议支持，`tests/test_mcp.py` 也有对应断言——哪天 SDK 撤了 handshake 版协议，这里先报错，而不是等 agent 调不通才发现。
 
-已知边界：任务表在进程内存里（server 重启 `job_id` 即失效）；`memory.ingest` 的 `origin` 参数（`doc`/`session`/`note`）目前只回显不落库——它与图上的 `origin`（`extracted`/`manual`）不是同一个维度：后者由 LightRAG 的 `source_id` 判定，前者是“记忆从哪来”；`spill_refs` 能取回的只有“还在库里”的东西（实体/边/chunk 被删就报 `missing`）；token 数是粗估（CJK 按 1 字 ≈ 1 token，ASCII 按 4 字符 ≈ 1 token），偏保守不偏激进；暂无鉴权，只适合本机 stdio。
+已知边界：`memory.ingest` 的 `origin` 参数（`doc`/`session`/`note`）目前只回显不落库——它与图上的 `origin`（`extracted`/`manual`）不是同一个维度：后者由 LightRAG 的 `source_id` 判定，前者是“记忆从哪来”；票据文件只保最近 200 条（更早的 job 查不到，但文档本身仍在库里）；`spill_refs` 能取回的只有“还在库里”的东西（实体/边/chunk 被删就报 `missing`）；token 数是粗估（CJK 按 1 字 ≈ 1 token，ASCII 按 4 字符 ≈ 1 token），混排文本实测少算约 11%；暂无鉴权，只适合本机 stdio。
 
 ## 11. 触发器：三钩子 + 一兜底（M5）
 
