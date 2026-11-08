@@ -25,9 +25,7 @@ import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
-
-from .config import Config, load_config
+from .config import Config, load_config, load_repo_dotenv
 from .memory_api import API_VERSION, MemoryTools
 from .rag import init_rag
 
@@ -172,7 +170,7 @@ def build_server():
 
 
 def main(argv: list[str] | None = None) -> None:
-    load_dotenv()
+    load_repo_dotenv()
     parser = argparse.ArgumentParser(
         prog="graphkb-mcp", description="gk-visual Agent 记忆面（MCP over stdio）"
     )

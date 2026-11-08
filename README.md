@@ -176,6 +176,7 @@ data/            # 库本体（gitignore）
 - **溯源只到「有没有人碰过」**：`origin` 能分出抽取 / 人工 / 混合，但分不出「谁在什么时候改的」；也没有“抽取后又被人改回去了”这种历史（要真审计日志，不在个人底座阶段）。
 - **URL 抓取未做**：S8 只做了本地文件解析；网页抓取涉及 SSRF/超时/正文抽取，需单独切片。
 - **没有鉴权**：`serve` 只该绑 `127.0.0.1`，别指望它挡人。CI 只覆盖 pytest 与前端构建（`.github/workflows/ci.yml`），**不覆盖 holdout**——那要跑真模型，成本与稳定性都不适合放 CI；要跑就本地 `python scripts/preflight.py --holdout <切片>`（见 §6）。
+- **目录解析与 cwd 无关**：`.env` 认仓库根那份，相对 `GKB_WORKING_DIR` 也按仓库根解析（stdio 客户端的 cwd 不可控：Cola 实测给的是 `D:\Cola`，按 cwd 算会把新库建到那里）。
 - **同进程多个库已自动隔离**：LightRAG 的 KV 存储挂在进程级共享字典（`_shared_dicts[workspace:namespace]`）上，"谁负责从磁盘加载"只是个全局标志。后果是第二个实例的 `text_chunks` / `full_docs` 会静静地为空（图还能读，因为 GraphML 是每实例自己读文件）。`graphkb/rag.py::_isolate_shared_kv` 在初始化后按**内容**判定：我的文件里有、共享字典里没有 → 把这个存储换成本实例自己的副本（读自己的文件、写也只落自己的目录）；同库重复建实例则保持上游共享。彻底避开还是给每个库不同 `GKB_WORKSPACE`。
 - **注入预算在真图上是瓶颈（已缓解两轮，未消失）**：260 实体的真图上，一段话的命中往往就有 13 行注入，其中 10 行是 `[path]` 中间节点。第一轮按层分预算（anchor 40% / cited 25% / direct 15% / path 12% / chunk 8%，份额是软上限）：同样 800 token，装进去的条目从 9 条变成 34 条，溢出从 41 条 / 4380 token 降到 16 条 / 2936。第二轮（2026-11-08）把 **path 层的实体行整体去掉**——中间节点的唯一作用是证明“锚点和引用点连得上”，而这件事 `[path] A -> B［关键词］` 已经说完了，再单列一行“名字（类型）”是重复：80 实体夹具上注入从 14 行降到 10 行（path 10 行 → 6 行），692 → 649 token；要中间节点的描述仍然能 `entity:` 取。
 预算还会按图规模取档（≤100 实体 800 / ≤400 → 1200 / ≤1000 → 1600 / 其余 2000 封顶），显式传 `budget.max_context_tokens` 则完全不生效；到底用了哪档由 `budget_used.context_tokens_source` 交代（`adaptive` / `explicit`）。真图 260 实体上从 800 提到 1200 后，inline 从 34 条 / 734 token 变成 38 条 / 1158，溢出从 16 块降到 12 块。
@@ -196,20 +197,23 @@ data/            # 库本体（gitignore）
 ```bash
 pip install -e ".[mcp]"
 graphkb-mcp --workspace ws-personal          # 或 --workspace ws-team-fangjin
+graphkb-mcp                                  # 不带 --workspace = 用 data/ 根目录那个库
 ```
 
-客户端配置示例（Claude Desktop / Cola 这类 stdio 客户端）：
+**cwd 无关**：stdio 客户端把 cwd 设成什么都可能（实测 Cola 用的是 `D:\Cola`），所以 `.env` 认的是**仓库根**那一份，相对的 `GKB_WORKING_DIR` 也按仓库根解析——不会把库建到客户端的工作目录里。因此客户端配置里不需要 `env`/`cwd`：
 
 ```json
 {
   "mcpServers": {
     "gk-visual": {
-      "command": "graphkb-mcp",
-      "args": ["--workspace", "ws-personal"]
+      "command": "C:\\Users\\<你>\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": ["-u", "-m", "graphkb.mcp_server"]
     }
   }
 }
 ```
+
+（等价写法：`"command": "graphkb-mcp"`—— `pip install -e .` 已把入口装进 Scripts。）
 
 几条设计上的硬规定：
 

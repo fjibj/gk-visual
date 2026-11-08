@@ -7,9 +7,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-from .config import load_config
+from .config import load_config, load_repo_dotenv
 from .ingest import ingest_document
 from .memory_api import MemoryTools
 from .merge import merge_entities
@@ -175,7 +173,7 @@ def main() -> None:
     p_trigger.add_argument("--gate", type=int, default=None, help="本次会话总闸 K（默认读 GKB_TRIGGER_K）")
 
     args = parser.parse_args()
-    load_dotenv()
+    load_repo_dotenv()
 
     if args.cmd == "doctor":
         raise SystemExit(asyncio.run(_doctor()))

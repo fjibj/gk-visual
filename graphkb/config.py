@@ -1,9 +1,36 @@
-"""配置层：从环境变量（.env / 进程 env）读取，env 优先于默认值。"""
+"""配置层：从环境变量（.env / 进程 env）读取，env 优先于默认值。
+
+两个与「从哪个目录启动」有关的约定（stdio 的 MCP 客户端把 cwd 设成什么都可能，
+探针 A 实测 Cola 把 MCP 进程的 cwd 定在 `D:\\Cola`）：
+  · `.env` 不从 cwd 找，而是认**仓库根**那一份（`load_repo_dotenv()`）；
+  · `GKB_WORKING_DIR` 给相对路径时，按**仓库根**解析，而不是 cwd——
+    否则从别处启动会静静地在 `D:\\Cola\\data` 这种地方建一个新库。
+"""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+ENV_FILE = REPO_ROOT / ".env"
+
+
+def load_repo_dotenv() -> None:
+    """加载 `.env`：优先仓库根那份；没有就退回 python-dotenv 的 cwd 搜索。"""
+    from dotenv import load_dotenv
+
+    if ENV_FILE.is_file():
+        load_dotenv(dotenv_path=ENV_FILE)
+    else:
+        load_dotenv()
+
+
+def resolve_dir(raw: str) -> str:
+    """把目录配置解析成绝对路径：相对路径按**仓库根**算，不按 cwd。"""
+    p = Path(str(raw or "./data")).expanduser()
+    return str(p if p.is_absolute() else (REPO_ROOT / p).resolve())
 
 
 def _env(name: str, default: str = "") -> str:
@@ -64,7 +91,7 @@ class Config:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     triggers: TriggerConfig = field(default_factory=TriggerConfig)
-    working_dir: str = "./data"
+    working_dir: str = field(default_factory=lambda: resolve_dir("./data"))
     language: str = "Chinese"
     workspace: str = ""
     max_upload_mb: int = 50
@@ -94,7 +121,7 @@ def load_config() -> Config:
             max_paths=int(_env("GKB_MAX_PATHS", "6")),
         ),
         triggers=TriggerConfig(autonomous_limit=int(_env("GKB_TRIGGER_K", "5"))),
-        working_dir=_env("GKB_WORKING_DIR", "./data"),
+        working_dir=resolve_dir(_env("GKB_WORKING_DIR", "./data")),
         language=_env("GKB_LANGUAGE", "Chinese"),
         workspace=_env("GKB_WORKSPACE", ""),
         max_upload_mb=int(_env("GKB_MAX_UPLOAD_MB", "50")),
