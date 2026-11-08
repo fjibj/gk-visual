@@ -162,8 +162,11 @@ def build_server():
 
     @app.tool(name="memory.ingest_status")
     async def memory_ingest_status(ctx: Context, job_id: str) -> dict:
-        """查 `memory.ingest` 的写入进度（queued | running | done | error | unknown）。"""
-        return _tools(ctx).ingest_status(job_id=job_id)
+        """查 `memory.ingest` 的写入进度（queued | running | done | error | unknown）。
+
+        跨进程可查：本进程没这张票时，状态以落盘票据 + 库上 doc_status 为准。
+        """
+        return await _tools(ctx).ingest_status(job_id=job_id)
 
     return app
 

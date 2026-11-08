@@ -9,14 +9,20 @@
   P4 预算是展示预算：超限如实截断并计数，不静默丢弃
   P5 降级要诚实：`degraded` + `reason` 一起回，让调用方自己决定信多少
   P6 溯源可见：`hits` 与 `expand` 都带 `origin`（extracted|manual|mixed|unknown）+ 来源文档（M4）
+  P7 任务可追：job 票据落盘，状态以 LightRAG 的 `doc_status` 为准——
+     进程死了票不该跟着死（MCP 是 stdio，**每个 agent 会话就是一个新进程**）
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 
 from .config import Config, RetrievalConfig
 from .documents import slugify, upsert_document
@@ -75,13 +81,13 @@ SPILL_SUMMARY_CHARS = 60  # spill_ref 的一行摘要多少字
 # 按层分配预算（2026-11-06 真图实测后改）：每层一份软上限，用不完的往下传（waterfall）。
 # 为什么分层：真图上 `1 个锚 + 2 个引用点` 的 13 行注入里有 10 行是 [path]——
 # 中间节点只需要证明「锚点和引用点确实连得上」，却和锚点抢同一份额度，把关系与块挤去溢出。
-# 所以 path 层两件事：只带名字 + 类型（不带描述），且额度最小；锚点/证据用不完的额度
-# 会传给后面的层，不会白白浪费。
+# 所以 path 层只拿最小额度，且**只出关系行、不出实体行**（见 `build_answer_context`），
+# 锚点/证据用不完的额度会传给后面的层，不会白白浪费。
 LAYER_SHARES: dict[str, float] = {
     "anchor": 0.40,  # 问题的落点：完整描述
     "cited": 0.25,  # 证据：完整描述
     "direct": 0.15,  # 命中关系（两端都是锚点/引用点，本身就是证据）
-    "path": 0.12,  # 连通性证据：只要名字 + 类型
+    "path": 0.12,  # 连通性证据：只留 `A -> B［关键词］`
     "chunk": 0.08,  # 原文：只进来一点点，其余靠 spill_ref 取
 }
 LAYER_ORDER: tuple[str, ...] = tuple(LAYER_SHARES)
@@ -97,7 +103,22 @@ MODES = frozenset({"agent", "human", "auto"})
 REASON_PRIORITY = ("texts_equal", "vdb_error", "no_anchor", "vector_fallback", "budget_truncated")
 
 JOB_RETENTION = 200
-"""任务表上限（进程内存）。超了就丢最老的已完成任务——job_id 本来就是短命票据。"""
+"""票据文件里最多留多少条（跨进程）。超了先丢最早的已完成任务，再丢最早的整体。"""
+
+JOBS_FILE_NAME = "mcp_jobs.json"
+"""job 票据的落盘文件名（放在 `working_dir`；有 workspace 时带上后缀分开存）。"""
+
+DOC_STATUS_TO_JOB: dict[str, tuple[str, str]] = {
+    "pending": ("queued", "排队中：等 pipeline 取件"),
+    "preprocessed": ("running", "解析完成，待抽取"),
+    "parsing": ("running", "正在解析文档"),
+    "analyzing": ("running", "正在抽取实体/关系"),
+    "processing": ("running", "正在写图/写向量"),
+    "processed": ("done", "完成"),
+    "failed": ("error", "失败"),
+}
+"""LightRAG 的文档状态 → 工具面状态（工具面词表保持 queued/running/done/error，
+具体阶段放在 progress + doc_status 里——调用方按固定词表分支，不用猜上游有几种状态）。"""
 
 
 # ---------------------------------------------------------------- 预算
@@ -133,7 +154,7 @@ def resolve_budget(
 ) -> Budget:
     """`budget` 入参 → 检索预算。负值/零值一律报错：预算是上限，不允许悄悄变成 0。
 
-    `default_context_tokens` 由调用方给（`MemoryTools.search` ���它传按图规模自适应的值）；
+    `default_context_tokens` 由调用方给（`MemoryTools.search` 会传按图规模自适应的值）；
     显式传了 `budget.max_context_tokens` 就听调用方的。
     """
     raw = raw or {}
@@ -264,8 +285,7 @@ def _bucket_of_relation(r: dict) -> str:
     return "path" if str(r.get("layer") or "") == "path" else "direct"
 
 
-def _entity_candidate(e: dict, *, compact: bool = False) -> Candidate | None:
-    """`compact=True` 是给 path 层的：只留名字 + 类型，描述不进注入（摘要里仍保留）。"""
+def _entity_candidate(e: dict) -> Candidate | None:
     name = str(e.get("name") or "")
     if not name:
         return None
@@ -274,7 +294,7 @@ def _entity_candidate(e: dict, *, compact: bool = False) -> Candidate | None:
     line = f"[{layer}] {name}"
     if e.get("type"):
         line += f"（{e['type']}）"
-    if desc and not compact:
+    if desc:
         line += f"：{_clip(desc, DESC_CLIP)}"
     summary = name + (f"（{e['type']}）" if e.get("type") else "")
     if desc:
@@ -319,14 +339,20 @@ def build_answer_context(
     · **溢出不是丢弃**——预算是「展示预算」，不是「语义筛」；装不下的保留引用 + 一行摘要，
       调用方需要时再取（third way：既不是「全塞进 prompt」也不是「默默丢掉」）；
     · **按层给额度**（`LAYER_SHARES`）：锚点 → 证据 → 命中关系 → 路径 → 块。
-      每层只分到一份软上限，花不完的额度自动传给下一层；路径层只带名字 + 类型。
-      这一条是拿真图改的：不分层时 13 行注入里有 10 行是路径节点（占 77% 的行、也占额），
-      而它们只负责证明「连得上」，不需要完整描述（要描述用 `entity:` 取）。
+      每层只分到一份软上限，花不完的额度自动传给下一层。
+    · **path 层只出关系行，不出实体行**：中间节点的唯一作用是证明「锚点和引用点连得上」，
+      而这件事已经由 `[path] A -> B［关键词］` 说完了；再单列一行「名字（类型）」是重复，
+      而真图上这类行能占注入行数的六七成（80 实体夹具：14 行里 4 行；260 实体真图：10/14）。
+      要这些节点的描述仍然可以用 `entity:` 取——注入里少一行，不等于看不见它。
+      完整性靠 `hit_relationships` 保证：路径上每一条跳边都会成关系行，所以每个中间节点
+      至少出现在一条关系行里（回归用例 `test_path_entities_are_visible_through_relation_lines`）。
     """
     buckets: dict[str, list[Candidate]] = {key: [] for key in LAYER_ORDER}
     for e in sorted(entities, key=lambda x: (_layer_rank(x.get("layer")), str(x.get("name") or ""))):
         bucket = _bucket_of_entity(e)
-        cand = _entity_candidate(e, compact=(bucket == "path"))
+        if bucket == "path":
+            continue  # 中间节点只通过关系行出场，见上面的 docstring
+        cand = _entity_candidate(e)
         if cand:
             buckets[bucket].append(cand)
     for r in sorted(relationships, key=lambda x: _layer_rank(x.get("layer"))):
@@ -390,6 +416,52 @@ def build_answer_context(
 # ---------------------------------------------------------------- 写入任务
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _jobs_file(cfg: Config) -> Path:
+    """job 票据文件路径：`working_dir` 下，有 workspace 就分开存（同名 workspace 才共享票据）。"""
+    base = Path(str(cfg.working_dir or "./data"))
+    ws = "".join(c if (c.isalnum() or c in "._-") else "-" for c in str(cfg.workspace or ""))[:40]
+    return base / (f"mcp_jobs.{ws}.json" if ws else JOBS_FILE_NAME)
+
+
+def _read_job_records(path: Path) -> dict[str, dict]:
+    """读票据文件。读不到/读坏了都当空表——票据是辅助信息，不能让它拦住写入。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001 — 文件坏了就重建，不能把服务拖下水
+        logger.warning("票据文件读不了（%s）：%s: %s；按空表处理", path, type(exc).__name__, exc)
+        return {}
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    if not isinstance(jobs, dict):
+        return {}
+    return {str(k): dict(v) for k, v in jobs.items() if isinstance(v, dict)}
+
+
+def _write_job_records(path: Path, records: dict[str, dict]) -> None:
+    """原子写（tmp + os.replace）：写到一半被杀也不会留下半截 JSON。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    payload = {"version": 1, "jobs": records}
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _trim_job_records(records: dict[str, dict]) -> None:
+    """超出上限就丢：先丢最早的已完成/失败，再丢最早的——没结果的活尽量留着。"""
+    while len(records) > JOB_RETENTION:
+        finished = [
+            k for k, v in records.items() if str(v.get("status") or "") in ("done", "error")
+        ]
+        pool = finished or list(records)
+        oldest = min(pool, key=lambda k: str(records[k].get("started_at") or ""))
+        records.pop(oldest, None)
+
+
 def _entity_text(name: str, node: dict) -> str:
     etype = node.get("entity_type") or node.get("type") or ""
     head = name + (f"（{etype}）" if etype else "")
@@ -443,6 +515,7 @@ class MemoryTools:
         self.cfg = cfg
         self.rag = rag
         self._jobs: dict[str, Job] = {}
+        self._jobs_path = _jobs_file(cfg)  # 跨进程可查的票据（只到 job_id → doc_id）
         self._tasks: set[asyncio.Task] = set()
         self._graph_nodes: int | None = None  # 图规模缓存（自适应预算用），写侧完成后失效
 
@@ -778,6 +851,7 @@ class MemoryTools:
                 "图上的节点/边溯源（extracted/manual）由 provenance 另行判定。"
             )
         self._register(job)
+        self._remember(job, title=doc_title)  # 先落票据再干活：进程被杀也还知道这张票指向哪篇文档
 
         if wait:
             await self._run(job, doc_title, content)
@@ -788,20 +862,120 @@ class MemoryTools:
         task.add_done_callback(self._tasks.discard)
         return job.as_dict()
 
-    def ingest_status(self, job_id: str) -> dict:
-        job = self._jobs.get(str(job_id))
-        if job is None:
-            # 不报错：agent 拿到一个结构化答复比吃异常好；但要把「为什么会没有」说清楚
+    async def ingest_status(self, job_id: str) -> dict:
+        """查写入进度。两级来源：本进程票据 > 落盘票据 + LightRAG 的 `doc_status`。
+
+        为什么要有第二级：MCP 是 stdio，**每个 agent 会话就是一个新进程**——job_id 靠内存活不过去。
+        但活儿不会丢：LightRAG 对 pending/processing/parsing/analyzing 的文档会自动续跑，
+        状态也落在磁盘上。所以查不到内存票不是「查无此人」，而是去库上照实回话。
+        """
+        jid = str(job_id)
+        job = self._jobs.get(jid)
+        if job is not None:
+            out = job.as_dict()
+            out["status_source"] = "process"
+            return out
+
+        record = _read_job_records(self._jobs_path).get(jid)
+        if record is None:
+            # 不报错：agent 拿到结构化答复比吃异常好；但要把「为什么会没有」说清楚
             return {
-                "job_id": job_id,
+                "job_id": jid,
+                "doc_id": "",
+                "origin": "",
                 "status": "unknown",
                 "progress": "",
-                "error": "未知 job_id：任务表在 MCP 进程内存里，server 重启即清空",
+                "error": (
+                    f"没有这个 job_id：本进程的任务表和落盘票据（{self._jobs_path.name}）里都没有。"
+                    "票据只保最近的任务，更早的会被清；文档本身是否在库里，用 memory.search 查。"
+                ),
                 "result": None,
+                "warnings": [],
+                "status_source": "process+store",
             }
-        return job.as_dict()
+
+        doc_id = str(record.get("doc_id") or "")
+        status, progress, error, result, raw = await self._doc_status_of(doc_id)
+        return {
+            "job_id": jid,
+            "doc_id": doc_id,
+            "origin": record.get("origin") or "",
+            "status": status,
+            "progress": progress,
+            "error": error,
+            "result": result,
+            "doc_status": raw,
+            "started_at": record.get("started_at") or "",
+            "updated_at": record.get("updated_at") or "",
+            "warnings": [
+                "这张票不是本进程发出的：状态来自落盘票据 + LightRAG 的 doc_status（磁盘）。"
+                "LightRAG 会给 pending/processing/parsing/analyzing 的文档自动续跑，"
+                "所以 running 不等于卡住；真失败会回 failed 并带 error。"
+            ],
+            "status_source": "store",
+        }
+
+    async def _doc_status_of(
+        self, doc_id: str
+    ) -> tuple[str, str, str | None, dict | None, str]:
+        """拿 doc_id 去库上看真状态：`(status, progress, error, result, 原始状态)`。"""
+        if not doc_id:
+            return "unknown", "", "票据里没有 doc_id（这次写入没走到建文档那一步）", None, ""
+        try:
+            row = await self.rag.doc_status.get_by_id(doc_id)
+        except Exception as exc:  # noqa: BLE001 — 读不到要如实说，不能假装还在跑
+            logger.warning("读 doc_status 失败：%s: %s", type(exc).__name__, exc)
+            return "unknown", "", f"读库上 doc_status 失败：{type(exc).__name__}: {exc}", None, ""
+        if not row:
+            return (
+                "unknown",
+                "库上没有这个 doc_id 的记录",
+                "文档不在 doc_status 里：可能写入还没开始、已被删除，或票据早于库存在。",
+                None,
+                "",
+            )
+        if not isinstance(row, dict):
+            row = getattr(row, "__dict__", {}) or {}
+        # 盘上读回来是字符串，进程内刚写完是 `DocStatus` 枚举——两种形态都得认。
+        status_value = row.get("status")
+        raw = str(getattr(status_value, "value", None) or status_value or "")
+        status, progress = DOC_STATUS_TO_JOB.get(raw, ("unknown", f"未知的文档状态：{raw!r}"))
+        error = None
+        if status == "error":
+            error = str(row.get("error_msg") or "") or "写入失败（库上没有给出原因）"
+        result = None
+        if status == "done":
+            result = {
+                "doc_id": doc_id,
+                "created": None,  # 库里只有状态，分不出「新建」还是「覆盖」
+                "file_path": row.get("file_path") or doc_id,
+                "content_length": int(row.get("content_length") or 0),
+                "entity_count": None,  # 要算得扫图，这个工具不干重活
+                "relation_count": None,
+                "chunks": len(row.get("chunks_list") or []),
+            }
+        return status, progress, error, result, raw
 
     # ---- 内部 ----
+
+    def _remember(self, job: Job, *, title: str | None = None) -> None:
+        """把票据落盘（job_id → doc_id 等）。写盘失败只记日志：记忆写入不能因为一本账写不进去就崩。"""
+        try:
+            records = _read_job_records(self._jobs_path)
+            old = records.get(job.job_id) or {}
+            records[job.job_id] = {
+                "job_id": job.job_id,
+                "doc_id": job.doc_id,
+                "title": title if title is not None else old.get("title", ""),
+                "origin": job.origin,
+                "status": job.status,
+                "started_at": old.get("started_at") or _now(),
+                "updated_at": _now(),
+            }
+            _trim_job_records(records)
+            _write_job_records(self._jobs_path, records)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("任务票据落盘失败（不影响本次写入）：%s: %s", type(exc).__name__, exc)
 
     def _register(self, job: Job) -> None:
         self._jobs[job.job_id] = job
@@ -830,3 +1004,6 @@ class MemoryTools:
             job.progress = "失败"
             job.error = f"{type(exc).__name__}: {exc}"
             logger.exception("memory.ingest 失败 job=%s", job.job_id)
+        finally:
+            # 收尾状态也告诉票据：下次重启查这张票时，能区分「当时跑完了」和「跑到一半被杀」
+            self._remember(job)

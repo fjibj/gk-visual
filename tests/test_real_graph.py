@@ -593,11 +593,11 @@ def test_m2_unlinked_chunks_stay_out_of_injection():
             assert ref["ref"].split(":", 1)[1] in linked_ids, "没关联的块不许出现在注入/溢出清单里"
 
 
-def test_m2_real_graph_injection_is_dominated_by_path_nodes():
-    """真图上注入的行数仍由路径节点占多数，但**额度**现在被它们省下来了。
+def test_m2_real_graph_injection_path_layer_is_relations_only():
+    """path 层只出关系行：真图上的注入行数终于不再被中间节点吃掉一大半。
 
-    1 个锚 + 2 个引用点 → 10 行 path：行数过半，token 却只占一两成——
-    这就是按层分预算想要的效果（行数不是问题，额度才是）。
+    1 个锚 + 2 个引用点 → 原来 14 行里 4 行是 path 实体（名字 + 类型，无描述），
+    现在这 4 行变成 0：连通性由 `A -> B［关键词］` 关系行自己说完了。
     """
     graph, base = _replay("h1_plan")
     a, b, c = _pick_three(base, graph)
@@ -605,18 +605,62 @@ def test_m2_real_graph_injection_is_dominated_by_path_nodes():
 
     res = _search(rag, query_text=a, task=f"帮我核对 {b} 和 {c} 的接口说明")
     lines = [ln for ln in res["answer_context"].splitlines() if ln.startswith("[")]
-    layers = [ln.split("]")[0] + "]" for ln in lines]
-    assert layers.count("[anchor]") == 1
-    assert layers.count("[path]") > len(layers) / 2, f"path 行数应当过半：{layers}"
+    path_lines = [ln for ln in lines if ln.startswith("[path]")]
+    assert path_lines, "这个 case 本该有路径证据"
+    assert all(" -> " in ln for ln in path_lines), f"path 层不该再有实体行：{path_lines}"
 
     by_layer = res["trace"]["budget_used"]["context_by_layer"]
     path_tokens = by_layer["path"]["tokens"]
     assert path_tokens <= res["trace"]["budget_used"]["context_used"] * 0.35, (
         f"path 层额度应当很小：{by_layer}"
     )
-    for line in lines:
-        if line.startswith("[path]"):
-            assert "：" not in line, f"path 行不该带描述：{line}"
+    for line in path_lines:
+        assert "：" not in line, f"path 行不该带描述：{line}"
+
+
+def test_path_entities_are_visible_through_relation_lines():
+    """去掉 path 实体行之后，每个中间节点必须仍能在某条关系行里看到。
+
+    这是「少一行」与「看不见」之间的分界线：去掉的前提是连通性完整——
+    路径上每一条跳边都会成关系行（`hit_relationships` 来自全图邻接），
+    所以中间节点一定出现在某条 `A -> B` 的两端。哪天这条不成立，说明断了一条路。
+    """
+    graph, base = _replay("h1_plan")
+    a, b, c = _pick_three(base, graph)
+    rag = _ReplayRag(_case("h1_plan"), graph, _chunks())
+
+    res = _search(rag, query_text=a, task=f"帮我核对 {b} 和 {c} 的接口说明")
+    layers = res["trace"]  # 工具面的 trace 已把 hit_layers 平铺开：anchors / cited / paths
+    middle = {
+        mid
+        for entry in layers["paths"]
+        for path in entry["paths"]
+        for mid in path[1:-1]
+        if mid not in layers["anchors"] and mid not in layers["cited"]
+    }
+    assert middle, "这个 case 本该有中间节点"
+    shown = {
+        ln.split("] ", 1)[-1]
+        for ln in res["answer_context"].splitlines()
+        if ln.startswith("[path]") and " -> " in ln
+    }
+    rel_endpoints = {n.strip() for row in shown for n in row.split("［")[0].split(" -> ")}
+    hidden = middle - rel_endpoints
+    assert not hidden, f"这些中间节点在注入里彻底消失了：{hidden}"
+
+    # 反证：把 path 关系行全删，中间节点必须真的全部消失——否则上面那条断言是空的
+    without = "\n".join(
+        ln
+        for ln in res["answer_context"].splitlines()
+        if not (ln.startswith("[path]") and " -> " in ln)
+    )
+    left = {
+        n.strip()
+        for ln in without.splitlines()
+        if ln.startswith("[path]")
+        for n in ln.split("] ", 1)[-1].split("［")[0].split(" -> ")
+    }
+    assert middle - left == middle, f"反证失败：删掉关系行后仍有节点可见：{middle - left}"
 
 
 def test_m2_real_graph_overflow_lands_on_chunks():
@@ -629,8 +673,11 @@ def test_m2_real_graph_overflow_lands_on_chunks():
     assert res["reason"] == "budget_truncated"
     assert res["degraded"] is True
     used = res["trace"]["budget_used"]
-    graph_items = len(res["hits"]["entities"]) + len(res["hits"]["relationships"])
-    assert used["context_inline"] >= graph_items, "实体与关系应当全进得来（path 层省下的额度够用）"
+    # path 层的实体不再进注入（只靠关系行出场），所以「该进来的」 = 非 path 实体 + 全部关系
+    graph_items = len([e for e in res["hits"]["entities"] if e.get("layer") != "path"]) + len(
+        res["hits"]["relationships"]
+    )
+    assert used["context_inline"] >= graph_items, "锚点/引用点与关系应当全进得来（path 层省下的额度够用）"
     assert {r["kind"] for r in res["spill_refs"]} == {"chunk"}, "溢出应当只落在块上"
     for ref in res["spill_refs"]:
         assert ref["ref"].split(":", 1)[1] in {

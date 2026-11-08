@@ -8,6 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -104,6 +107,13 @@ class _FakeDocStatus:
     async def get_docs_by_statuses(self, statuses, strict=False):
         return self._docs
 
+    async def get_by_id(self, doc_id):
+        """模拟 LightRAG 的 JsonKVStorage.get_by_id（盘上真值，跨进程能读）。"""
+        row = self._docs.get(doc_id)
+        if row is None:
+            return None
+        return dict(row) if isinstance(row, dict) else dict(getattr(row, "__dict__", {}))
+
 
 class _FakeRag:
     """检索 + 写入两用假图。`aquery` 默认直接失败——Agent 模式本就不该生成答案。"""
@@ -142,7 +152,12 @@ class _FakeRag:
     async def ainsert(self, text, ids=None, file_paths=None):
         self.calls.append(("insert", ids))
         self.docs[ids[0]] = SimpleNamespace(
-            file_path=file_paths[0], content_length=len(text), chunks_list=["chunk-1"]
+            file_path=file_paths[0],
+            content_length=len(text),
+            chunks_list=["chunk-1"],
+            status="processed",
+            created_at="2026-11-08T00:00:00+00:00",
+            updated_at="2026-11-08T00:00:30+00:00",
         )
 
     async def adelete_by_doc_id(self, doc_id):
@@ -153,7 +168,8 @@ class _FakeRag:
 
 def _tools(**kwargs) -> tuple[MemoryTools, _FakeRag]:
     rag = _FakeRag(**kwargs)
-    return MemoryTools(Config(), rag), rag
+    # 票据文件会写 working_dir，测试一律给临时目录（别往仓库的 ./data 里丢垃圾）
+    return MemoryTools(Config(working_dir=tempfile.mkdtemp(prefix="gkb-jobs-")), rag), rag
 
 
 # ---------------------------------------------------------------- memory.search
@@ -314,7 +330,7 @@ def test_search_no_hit_returns_empty_context_not_fabrication():
                 "metadata": {"failure_reason": "no_results"},
             }
 
-    tools = MemoryTools(Config(), _EmptyRag())
+    tools = MemoryTools(Config(working_dir=tempfile.mkdtemp(prefix="gkb-jobs-")), _EmptyRag())
     out = asyncio.run(tools.search({"query": "张三在哪工作", "task": "张三在字节跳动"}))
     assert out["answer_context"] == ""
     assert out["hits"]["entities"] == []
@@ -330,13 +346,14 @@ def test_ingest_wait_returns_done_and_status_is_queryable():
     async def scenario():
         out = await tools.ingest(source="session", content="张三在字节跳动工作", title="会话A", wait=True)
         assert out["status"] == "done", out["error"]
-        return tools.ingest_status(out["job_id"])
+        return await tools.ingest_status(out["job_id"])
 
     status = asyncio.run(scenario())
     assert status["status"] == "done"
     assert status["doc_id"] == "会话A"
     assert status["result"]["doc_id"] == "会话A"
     assert status["result"]["created"] is True
+    assert status["status_source"] == "process"  # 本进程的票最准
     assert rag.calls == [("insert", ["会话A"])]
 
 
@@ -347,7 +364,7 @@ def test_ingest_default_is_async_and_finishes_in_background():
         out = await tools.ingest(source="note", content="随手记：明天去北京", title="随手记")
         assert out["job_id"].startswith("job-")
         await asyncio.sleep(0.05)  # 让后台任务跑完
-        return tools.ingest_status(out["job_id"])
+        return await tools.ingest_status(out["job_id"])
 
     status = asyncio.run(scenario())
     assert status["status"] == "done"
@@ -367,7 +384,7 @@ def test_ingest_failure_is_reported_not_swallowed():
         async def ainsert(self, text, ids=None, file_paths=None):
             raise RuntimeError("LLM 超时")
 
-    tools = MemoryTools(Config(), _BrokenRag())
+    tools = MemoryTools(Config(working_dir=tempfile.mkdtemp(prefix="gkb-jobs-")), _BrokenRag())
     out = asyncio.run(tools.ingest(source="doc", content="正文", title="坏文档", wait=True))
     assert out["status"] == "error"
     assert "LLM 超时" in (out["error"] or "")
@@ -375,9 +392,123 @@ def test_ingest_failure_is_reported_not_swallowed():
 
 def test_ingest_status_unknown_job_is_structured():
     tools, _ = _tools()
-    out = tools.ingest_status("job-nope")
+    out = asyncio.run(tools.ingest_status("job-nope"))
     assert out["status"] == "unknown"
-    assert "重启即清空" in out["error"]
+    assert "落盘票据" in out["error"]
+
+
+# ---------------------------------------------------------------- 票据跨进程（P7）
+
+
+def test_job_ticket_survives_process_restart():
+    """MCP 是 stdio，每个 agent 会话一个新进程——job_id 不能一重启就查无此人。"""
+    work = tempfile.mkdtemp(prefix="gkb-jobs-")
+    rag = _FakeRag()
+
+    async def first_process():
+        tools = MemoryTools(Config(working_dir=work), rag)
+        return await tools.ingest(source="note", content="张三在字节跳动", title="会话B", wait=True)
+
+    out = asyncio.run(first_process())
+    ticket = Path(work) / "mcp_jobs.json"
+    assert ticket.is_file(), "票据必须落盘，不能只活在内存里"
+    saved = json.loads(ticket.read_text(encoding="utf-8"))["jobs"][out["job_id"]]
+    assert saved["doc_id"] == "会话B"
+
+    # 模拟「server 重启」：新实例、新空内存表，同一个 working_dir
+    async def second_process():
+        tools = MemoryTools(Config(working_dir=work), rag)
+        assert tools._jobs == {}
+        return await tools.ingest_status(out["job_id"])
+
+    status = asyncio.run(second_process())
+    assert status["status"] == "done", status
+    assert status["doc_id"] == "会话B"
+    assert status["status_source"] == "store"
+    assert status["doc_status"] == "processed"
+    assert any("自动续跑" in w for w in status["warnings"])
+
+
+def test_job_status_reads_doc_status_on_disk_not_memory():
+    """重启后状态必须听库的：库上说还在跑，就不能因为票上写着 done 就说完成。"""
+    work = tempfile.mkdtemp(prefix="gkb-jobs-")
+    rag = _FakeRag()
+    asyncio.run(MemoryTools(Config(working_dir=work), rag).ingest(
+        source="doc", content="正文", title="长文档", wait=True
+    ))
+    ticket = Path(work) / "mcp_jobs.json"
+    job_id = next(iter(json.loads(ticket.read_text(encoding="utf-8"))["jobs"]))
+    rag.docs["长文档"].status = "analyzing"  # 库上退回「还在抽」
+
+    status = asyncio.run(MemoryTools(Config(working_dir=work), rag).ingest_status(job_id))
+    assert status["status"] == "running"
+    assert status["doc_status"] == "analyzing"
+    assert "抽取" in status["progress"]
+
+
+def test_job_status_reports_failed_with_reason():
+    work = tempfile.mkdtemp(prefix="gkb-jobs-")
+    rag = _FakeRag()
+    asyncio.run(MemoryTools(Config(working_dir=work), rag).ingest(
+        source="doc", content="正文", title="坏文档", wait=True
+    ))
+    job_id = next(iter(json.loads((Path(work) / "mcp_jobs.json").read_text(encoding="utf-8"))["jobs"]))
+    rag.docs["坏文档"].status = "failed"
+    rag.docs["坏文档"].error_msg = "LLM 返回空"
+
+    status = asyncio.run(MemoryTools(Config(working_dir=work), rag).ingest_status(job_id))
+    assert status["status"] == "error"
+    assert "LLM 返回空" in status["error"]
+
+
+def test_job_status_accepts_enum_doc_status():
+    """同一个状态有两种形态：盘上读回来是字符串，本进程刚写完是 `DocStatus` 枚举。
+
+    （这条是现场验证时被真的：被中断的文档被自动续跑后，row 里是 `DocStatus.PROCESSED`，
+     `str()` 一下变成 `DocStatus.PROCESSED`，词表对不上就误报 unknown。）
+    """
+    from lightrag.base import DocStatus
+
+    work = tempfile.mkdtemp(prefix="gkb-jobs-")
+    rag = _FakeRag()
+    asyncio.run(MemoryTools(Config(working_dir=work), rag).ingest(
+        source="doc", content="正文", title="枚举文档", wait=True
+    ))
+    job_id = next(iter(json.loads((Path(work) / "mcp_jobs.json").read_text(encoding="utf-8"))["jobs"]))
+    rag.docs["枚举文档"].status = DocStatus.PROCESSED
+
+    status = asyncio.run(MemoryTools(Config(working_dir=work), rag).ingest_status(job_id))
+    assert status["status"] == "done", status
+    assert status["doc_status"] == "processed"
+
+
+def test_job_status_when_doc_is_gone_from_store():
+    """票还在、库上没了（被删或没写进去）：如实说不知道，不继承票上的 done。"""
+    work = tempfile.mkdtemp(prefix="gkb-jobs-")
+    rag = _FakeRag()
+    asyncio.run(MemoryTools(Config(working_dir=work), rag).ingest(
+        source="doc", content="正文", title="会被删的", wait=True
+    ))
+    job_id = next(iter(json.loads((Path(work) / "mcp_jobs.json").read_text(encoding="utf-8"))["jobs"]))
+    rag.docs.clear()
+
+    status = asyncio.run(MemoryTools(Config(working_dir=work), rag).ingest_status(job_id))
+    assert status["status"] == "unknown"
+    assert "doc_status" in (status["error"] or "")
+
+
+def test_job_tickets_are_workspace_scoped():
+    """两个 workspace 不共票据：团队库的票据不该在别人的表里。"""
+    work = tempfile.mkdtemp(prefix="gkb-jobs-")
+    rag = _FakeRag()
+    asyncio.run(MemoryTools(Config(working_dir=work, workspace="team-a"), rag).ingest(
+        source="note", content="甲的笔记", title="甲", wait=True
+    ))
+    asyncio.run(MemoryTools(Config(working_dir=work, workspace="team-b"), rag).ingest(
+        source="note", content="乙的笔记", title="乙", wait=True
+    ))
+    names = sorted(p.name for p in Path(work).glob("mcp_jobs*.json"))
+    assert names == ["mcp_jobs.team-a.json", "mcp_jobs.team-b.json"], names
 
 
 def test_ingest_manual_origin_warns_it_is_not_persisted():
@@ -447,19 +578,26 @@ def test_search_default_budget_follows_graph_size():
 # ---------------------------------------------------------------- M3：Inline & Spill
 
 
-def test_layer_budget_path_layer_is_compact():
-    """path 层只带名字 + 类型：额度小、不带描述（描述可在 spill 摘要里，也能用 entity: 取）。"""
+def test_layer_budget_path_layer_is_relations_only():
+    """path 层**只出关系行、不出实体行**：中间节点的连通性由 `A -> B` 表达，
+    再单列一行「名字（类型）」只是重复（真图上这类行能占注入行数的六七成）。
+    """
     entities = [
         {"name": "锚点", "type": "concept", "layer": "anchor", "description": "锚点的完整描述" * 8},
         {"name": "中间", "type": "concept", "layer": "path", "description": "路径节点的完整描述" * 8},
     ]
-    bundle = build_answer_context(entities, [], [], 800)
+    relationships = [
+        {"src": "锚点", "tgt": "中间", "layer": "path", "keywords": "跳边", "description": "关系描述" * 8}
+    ]
+    bundle = build_answer_context(entities, relationships, [], 800)
     lines = bundle.text.splitlines()
     assert any(ln.startswith("[anchor] 锚点") and "：" in ln for ln in lines)
-    path_line = next(ln for ln in lines if ln.startswith("[path] 中间"))
-    assert "（concept）" in path_line
-    assert "：" not in path_line, path_line
-    assert bundle.layer_used["path"]["tokens"] < bundle.layer_used["anchor"]["tokens"]
+    assert not any(ln.startswith("[path] 中间") for ln in lines), lines
+    rel = next(ln for ln in lines if "->" in ln)
+    assert "中间" in rel and "跳边" in rel, rel
+    assert "：" not in rel, f"path 关系行不带描述：{rel}"
+    assert bundle.layer_used["path"]["inline"] == 1
+    assert bundle.used_tokens < 800
 
 
 def test_layer_budget_unused_share_flows_forward():
