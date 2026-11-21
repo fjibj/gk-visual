@@ -127,6 +127,12 @@ def create_app(config=None) -> FastAPI:
     async def health():
         return {"status": "ok"}
 
+    # 判卷机专用端点：只在 GKB_TEST_MODE 打开时存在，生产环境注册不进来
+    from .testing import build_test_router, test_mode_enabled
+
+    if test_mode_enabled():
+        app.include_router(build_test_router())
+
     @app.get("/api/graph")
     async def get_graph(request: Request):
         return await _read_graph(request.app.state.rag)

@@ -131,6 +131,22 @@ S3 的 holdout 坏了 12 天没人发现——因为没人跑它。
 
 holdout 是 IDSD 的「考卷区」：场景由 `expectations.md` 派生、不回看实现，构建期对代理不可见（见 `holdout/README.md` 与 `.claudeignore`）。判卷结果存档在 `holdout/results/<版本>/report.json`。
 
+**判卷机有两套**：`holdout/evaluate.py`（v1，场景是 `.py`，进程内调函数，S1–S8 的历史判据）与
+`holdout/evaluate.ts`（**idsd-harness v3**，场景是带 front-matter 的 `.md`，起真 uvicorn 走 HTTP，
+支持属性测试 / `--observe` / `--affected` / `--stamp`）。**新考卷只写 `.ts` 那套**：
+
+```bash
+npx tsx holdout/evaluate.ts obs-$(date +%Y%m%d) --observe --skip-baseline   # 新考卷首轮：只记 WOULD_FAIL
+npx tsx holdout/evaluate.ts v3-v1 --stamp                                    # 正式判分 + 产 Verified-by 戳
+npx tsx holdout/evaluate.ts dev-$(date +%s) --affected --skip-baseline       # 只跑 git diff 命中的不变式
+```
+
+它需要 `GKB_TEST_MODE=1` 下才存在的三个端点（`/api/_test/reset`、`/api/_test/memory_search`、
+`/api/_test/state`）——判卷机自己会把服务用临时库拉起来，**不碰你的 `data/`**。
+预置数据在 `holdout/fixtures/kb-small`，由 `scripts/make_holdout_fixtures.py` 生成（不需要 LLM）；
+重置隔离单独有 `scripts/verify_holdout_reset.py`（也不需要 LLM）。
+接入过程与踩到的坑：`idsd/notes/harness-v3-adoption-20261121.md`。
+
 ## 7. 代码地图
 
 ```
@@ -145,6 +161,7 @@ graphkb/
   query.py       # 检索 + 命中分层（锚点 / 答案引用 / 最短路）-> trace
   render.py      # 把 trace 渲染成 CLI 可读的透明窗
   server.py      # FastAPI：/api/graph /api/query /api/documents /api/entities ... + 静态托管
+  testing.py     # 判卷机端点（仅 GKB_TEST_MODE=1）：reset / memory_search / state
   memory_api.py  # Agent 记忆面逻辑：search / expand / ingest / ingest_status + Inline&Spill + 按层分配预算 + 按图规模自适应（不 import mcp，可离线测）
   mcp_server.py  # MCP 适配器（stdio）：把 memory_api 挂成工具；日志走 stderr，stdout 只过 JSON-RPC
   triggers.py    # M5 触发器：三钩子 + H0 兜底 + 会话总闸 + 实体探针（不 import mcp，可离线测）

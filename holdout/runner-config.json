@@ -1,0 +1,4 @@
+{
+  "test_command": "python -m pytest -q -m \"not slow\"",
+  "typecheck_command": "python -m compileall -q graphkb"
+}

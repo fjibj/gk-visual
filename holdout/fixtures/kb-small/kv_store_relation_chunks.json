@@ -1,0 +1,123 @@
+{
+  "云栈科技<SEP>张三": {
+    "chunk_ids": [
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "云栈科技<SEP>张三"
+  },
+  "北京中关村<SEP>张三": {
+    "chunk_ids": [
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "北京中关村<SEP>张三"
+  },
+  "张三<SEP>订单系统": {
+    "chunk_ids": [
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "张三<SEP>订单系统"
+  },
+  "张三<SEP>李雷": {
+    "chunk_ids": [
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "张三<SEP>李雷"
+  },
+  "云栈科技<SEP>李雷": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "云栈科技<SEP>李雷"
+  },
+  "南京大学<SEP>李雷": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "南京大学<SEP>李雷"
+  },
+  "云栈科技<SEP>北京中关村": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-000",
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 2,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "云栈科技<SEP>北京中关村"
+  },
+  "云栈科技<SEP>成都": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-001"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "云栈科技<SEP>成都"
+  },
+  "仓储调度系统<SEP>成都": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-001"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "仓储调度系统<SEP>成都"
+  },
+  "成都<SEP>王敏": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-001"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "成都<SEP>王敏"
+  },
+  "仓储调度系统<SEP>王敏": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-001"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "仓储调度系统<SEP>王敏"
+  },
+  "李雷<SEP>王敏": {
+    "chunk_ids": [
+      "doc-zhangsan-chunk-001"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "李雷<SEP>王敏"
+  }
+}

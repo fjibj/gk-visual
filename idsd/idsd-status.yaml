@@ -85,3 +85,21 @@ summary:
   in_progress: 0
   pending: 1
   failed: 0
+
+# 验证体系（idsd-harness v3，2026-11-21 接入）
+harness:
+  version: v3
+  source: fjibj/fangjin-skills-factory → idsd-harness
+  judge: holdout/evaluate.ts
+  legacy_judge: holdout/evaluate.py（S1–S8 历史判据，保留不动）
+  scenarios: 14（12 自动 + 1 失败面 + 1 人工）
+  properties: 3（PROP-01 确定性 / PROP-02 预算守恒 / PROP-03 证据闭合）
+  invariants: 6（idsd/invariants.json）
+  fixtures: kb-small（9 实体 / 12 关系 / 2 文档 / 4 块，由 scripts/make_holdout_fixtures.py 生成）
+  holdout:
+    maturity: observe-only
+    waived: false
+    note: >
+      2026-11-21：骨架跑通，observe 10/13 绿 + 1 人工；剩下 3 条全部是 502 上游不可用
+      （火山 CodingPlan 订阅过期，与实现无关）。property、--stamp 待模型恢复后跑；
+      在那之前不得当作放行依据。reset 隔离已单独验证（scripts/verify_holdout_reset.py PASS）。

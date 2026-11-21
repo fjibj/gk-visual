@@ -1,0 +1,41 @@
+[
+  {
+    "id": "INV-01",
+    "desc": "检索确定性：同输入同图版本必得同 trace",
+    "trigger": ["graphkb/query.py", "graphkb/memory_api.py", "graphkb/testing.py", "**/graph/**"],
+    "scenarios": ["success/s7-memory-search-trace"],
+    "property": "PROP-01"
+  },
+  {
+    "id": "INV-02",
+    "desc": "预算守恒：注入 token 不超过 max_context_tokens",
+    "trigger": ["graphkb/memory_api.py", "graphkb/config.py"],
+    "scenarios": ["success/s7-memory-search-budget"],
+    "property": "PROP-02"
+  },
+  {
+    "id": "INV-03",
+    "desc": "证据闭合：trace 引用的实体必须存在于图中",
+    "trigger": ["graphkb/query.py", "graphkb/provenance.py"],
+    "scenarios": ["success/s7-memory-search-trace"],
+    "property": "PROP-03"
+  },
+  {
+    "id": "INV-04",
+    "desc": "可手工编辑：改完的实体读得回来",
+    "trigger": ["graphkb/server.py", "graphkb/merge.py"],
+    "scenarios": ["success/s4-entity-edit", "success/s4-merge-entities"]
+  },
+  {
+    "id": "INV-05",
+    "desc": "文档生命周期：删文档后图要跟着收敛",
+    "trigger": ["graphkb/documents.py", "graphkb/server.py"],
+    "scenarios": ["success/s6-document-delete", "success/s6-document-list"]
+  },
+  {
+    "id": "INV-06",
+    "desc": "不编造：查不到时注入为空并标记降级",
+    "trigger": ["graphkb/query.py", "graphkb/memory_api.py"],
+    "scenarios": ["failure/f1-no-hit-no-fabricate"]
+  }
+]

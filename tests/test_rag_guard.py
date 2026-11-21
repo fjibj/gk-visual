@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from graphkb.config import Config, EmbeddingConfig, LLMConfig
-from graphkb.rag import init_rag
+from graphkb.rag import _clear_shared_namespaces, init_rag, reset_rag
 
 
 def _cfg(working_dir: Path, workspace: str = "") -> Config:
@@ -107,3 +107,57 @@ def test_same_dir_twice_keeps_upstream_sharing(tmp_path):
     a, b = asyncio.run(run())
     assert a[0] and a[0]["content"] == "同一个库"
     assert b[0] and b[0]["content"] == "同一个库"
+
+
+# ---------------------------------------------------------------- reset（判卷机用）
+
+
+def test_clear_shared_namespaces_also_drops_the_reference_cache(tmp_path):
+    """清共享命名空间时必须连对象缓存一起清，否则重置看起来成功、实际什么都没清。
+
+    这是 2026-11-21 接 idsd-harness 时蹲到的：LightRAG 1.5.7 加了
+    `_namespace_data_cache`（免得每次拿锁），只删 `_shared_dicts` 的话，新实例会从
+    缓存里拿回**同一个旧字典对象**——图清空了（图不走共享字典），文档和块却还在。
+    """
+    from lightrag.kg import shared_storage
+
+    if not isinstance(getattr(shared_storage, "_namespace_data_cache", None), dict):
+        return  # 上游换实现就别硬试，测试保持“能跳就跳”
+
+    async def run():
+        ws = tmp_path / "cache"
+        _write_chunks(ws, {"c-1": _chunk("c-1", "缓存里的块")})
+        rag = await init_rag(_cfg(ws))
+        try:
+            first = await rag.text_chunks.get_by_ids(["c-1"])
+            assert first[0] is not None
+            cleared = _clear_shared_namespaces("")
+            return cleared, [c for c in cleared if c.startswith("_namespace_data_cache:")]
+        finally:
+            await rag.finalize_storages()
+
+    cleared, cache_cleared = asyncio.run(run())
+    assert cleared, "什么都没清：键名前缀判断有问题"
+    assert cache_cleared, "没清对象缓存：重置后会读回同一个旧字典"
+
+
+def test_reset_rag_gives_an_empty_store(tmp_path):
+    """重置后必须是真空库：文档、块、图一起没（不是只少了图）。"""
+
+    async def run():
+        ws = tmp_path / "reset"
+        _write_chunks(ws, {"r-1": _chunk("r-1", "要被清掉的块")})
+        cfg = _cfg(ws)
+        rag = await init_rag(cfg)
+        try:
+            assert (await rag.text_chunks.get_by_ids(["r-1"]))[0] is not None
+            rag = await reset_rag(rag, cfg)
+            chunks = await rag.text_chunks.get_by_ids(["r-1"])
+            nodes = await rag.chunk_entity_relation_graph.get_all_nodes()
+            return chunks, nodes
+        finally:
+            await rag.finalize_storages()
+
+    chunks, nodes = asyncio.run(run())
+    assert chunks[0] is None, "块还留着：上个场景会污染下一个"
+    assert nodes == []

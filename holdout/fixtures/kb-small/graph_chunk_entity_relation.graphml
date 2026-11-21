@@ -1,0 +1,159 @@
+<?xml version='1.0' encoding='utf-8'?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd"><key id="d9" for="edge" attr.name="weight" attr.type="double"/>
+<key id="d8" for="edge" attr.name="file_path" attr.type="string"/>
+<key id="d7" for="edge" attr.name="source_id" attr.type="string"/>
+<key id="d6" for="edge" attr.name="keywords" attr.type="string"/>
+<key id="d5" for="edge" attr.name="description" attr.type="string"/>
+<key id="d4" for="node" attr.name="file_path" attr.type="string"/>
+<key id="d3" for="node" attr.name="source_id" attr.type="string"/>
+<key id="d2" for="node" attr.name="description" attr.type="string"/>
+<key id="d1" for="node" attr.name="entity_type" attr.type="string"/>
+<key id="d0" for="node" attr.name="entity_id" attr.type="string"/>
+<graph edgedefault="undirected"><node id="张三">
+  <data key="d0">张三</data>
+  <data key="d1">person</data>
+  <data key="d2">后端工程师，2020 年加入云栈科技，负责订单系统，工作地点在北京中关村。</data>
+  <data key="d3">doc-zhangsan-chunk-000</data>
+  <data key="d4">张三的任职</data>
+</node>
+<node id="李雷">
+  <data key="d0">李雷</data>
+  <data key="d1">person</data>
+  <data key="d2">云栈科技创始人，毕业于南京大学，每周与张三开技术评审会。</data>
+  <data key="d3">doc-yunzhan-chunk-000&lt;SEP&gt;doc-zhangsan-chunk-001</data>
+  <data key="d4">云栈科技概况</data>
+</node>
+<node id="王敏">
+  <data key="d0">王敏</data>
+  <data key="d1">person</data>
+  <data key="d2">成都研发分部负责人，负责仓储调度系统，整理技术评审会记录。</data>
+  <data key="d3">doc-yunzhan-chunk-001&lt;SEP&gt;doc-zhangsan-chunk-001</data>
+  <data key="d4">云栈科技概况</data>
+</node>
+<node id="云栈科技">
+  <data key="d0">云栈科技</data>
+  <data key="d1">organization</data>
+  <data key="d2">电商基础设施公司，总部在北京中关村，在成都设有研发分部。</data>
+  <data key="d3">doc-yunzhan-chunk-000&lt;SEP&gt;doc-yunzhan-chunk-001&lt;SEP&gt;doc-zhangsan-chunk-000</data>
+  <data key="d4">云栈科技概况</data>
+</node>
+<node id="北京中关村">
+  <data key="d0">北京中关村</data>
+  <data key="d1">location</data>
+  <data key="d2">云栈科技总部所在地，也是张三的工作地点。</data>
+  <data key="d3">doc-yunzhan-chunk-000&lt;SEP&gt;doc-zhangsan-chunk-000</data>
+  <data key="d4">云栈科技概况</data>
+</node>
+<node id="成都">
+  <data key="d0">成都</data>
+  <data key="d1">location</data>
+  <data key="d2">云栈科技研发分部所在地，负责仓储调度系统。</data>
+  <data key="d3">doc-yunzhan-chunk-001</data>
+  <data key="d4">云栈科技概况</data>
+</node>
+<node id="南京大学">
+  <data key="d0">南京大学</data>
+  <data key="d1">organization</data>
+  <data key="d2">李雷的母校。</data>
+  <data key="d3">doc-yunzhan-chunk-000</data>
+  <data key="d4">云栈科技概况</data>
+</node>
+<node id="订单系统">
+  <data key="d0">订单系统</data>
+  <data key="d1">product</data>
+  <data key="d2">张三负责的系统。</data>
+  <data key="d3">doc-zhangsan-chunk-000</data>
+  <data key="d4">张三的任职</data>
+</node>
+<node id="仓储调度系统">
+  <data key="d0">仓储调度系统</data>
+  <data key="d1">product</data>
+  <data key="d2">成都分部负责的系统。</data>
+  <data key="d3">doc-yunzhan-chunk-001</data>
+  <data key="d4">云栈科技概况</data>
+</node>
+<edge source="张三" target="云栈科技">
+  <data key="d5">张三于 2020 年加入云栈科技，负责订单系统。</data>
+  <data key="d6">任职,加入</data>
+  <data key="d7">doc-zhangsan-chunk-000</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="张三" target="北京中关村">
+  <data key="d5">张三的工作地点在北京中关村。</data>
+  <data key="d6">工作地点</data>
+  <data key="d7">doc-zhangsan-chunk-000</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="张三" target="订单系统">
+  <data key="d5">张三负责订单系统。</data>
+  <data key="d6">负责</data>
+  <data key="d7">doc-zhangsan-chunk-000</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="张三" target="李雷">
+  <data key="d5">张三与李雷每周开一次技术评审会。</data>
+  <data key="d6">同事,评审会</data>
+  <data key="d7">doc-zhangsan-chunk-000</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="李雷" target="云栈科技">
+  <data key="d5">李雷是云栈科技的创始人。</data>
+  <data key="d6">创始人</data>
+  <data key="d7">doc-yunzhan-chunk-000&lt;SEP&gt;doc-zhangsan-chunk-001</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="李雷" target="南京大学">
+  <data key="d5">李雷毕业于南京大学。</data>
+  <data key="d6">毕业</data>
+  <data key="d7">doc-yunzhan-chunk-000&lt;SEP&gt;doc-zhangsan-chunk-001</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="李雷" target="王敏">
+  <data key="d5">王敏整理技术评审会记录，会议由李雷主持。</data>
+  <data key="d6">同事,会议</data>
+  <data key="d7">doc-yunzhan-chunk-001&lt;SEP&gt;doc-zhangsan-chunk-001</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="王敏" target="成都">
+  <data key="d5">王敏在成都担任研发分部负责人。</data>
+  <data key="d6">负责人</data>
+  <data key="d7">doc-yunzhan-chunk-001&lt;SEP&gt;doc-zhangsan-chunk-001</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="王敏" target="仓储调度系统">
+  <data key="d5">王敏负责仓储调度系统的团队。</data>
+  <data key="d6">负责</data>
+  <data key="d7">doc-yunzhan-chunk-001&lt;SEP&gt;doc-zhangsan-chunk-001</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="云栈科技" target="北京中关村">
+  <data key="d5">云栈科技总部设在北京中关村。</data>
+  <data key="d6">总部</data>
+  <data key="d7">doc-yunzhan-chunk-000&lt;SEP&gt;doc-yunzhan-chunk-001</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="云栈科技" target="成都">
+  <data key="d5">云栈科技在成都设有研发分部。</data>
+  <data key="d6">分部</data>
+  <data key="d7">doc-yunzhan-chunk-000&lt;SEP&gt;doc-yunzhan-chunk-001</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+<edge source="成都" target="仓储调度系统">
+  <data key="d5">成都分部负责仓储调度系统。</data>
+  <data key="d6">负责</data>
+  <data key="d7">doc-yunzhan-chunk-001</data>
+  <data key="d8">manual_creation</data>
+  <data key="d9">1.0</data>
+</edge>
+</graph></graphml>

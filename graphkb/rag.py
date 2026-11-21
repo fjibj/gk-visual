@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
+from pathlib import Path
 
 from lightrag import LightRAG
 
@@ -91,6 +93,77 @@ def build_rag(config: Config) -> LightRAG:
         embedding_func=build_embedding(config),
         addon_params={"language": config.language},
     )
+
+
+def _clear_shared_namespaces(workspace: str) -> list[str]:
+    """把本 workspace 挂在进程级共享字典里的数据清掉（`reset_rag` 用）。
+
+    要清三处，少一处重置就不干净：
+      · `_shared_dicts`  —— 真数据；
+      · `_init_flags`    —— 「已有人从磁盘加载过」的标志。留着它，新实例会跳过读文件，
+        而共享字典刚被清空 —— 结果是空库，但看起来像加载成功；
+      · `_namespace_data_cache` —— 每个 namespace 的字典对象缓存（1.5.7 为了少拿锁加的）。
+        只删 `_shared_dicts` 的话，新实例会从缓存里拿回**同一个旧字典对象**：
+        图会清空（图不走共享字典），文档与块却还在——2026-11-21 的重置验证就是这么红的。
+    """
+    try:
+        from lightrag.kg import shared_storage  # 上游内部模块，拿不到就算了
+    except Exception:  # noqa: BLE001
+        return []
+    prefix = f"{workspace}:" if workspace else ""
+    cleared: list[str] = []
+    for attr in ("_shared_dicts", "_init_flags", "_namespace_data_cache"):
+        bucket = getattr(shared_storage, attr, None)
+        if not isinstance(bucket, dict):
+            continue
+        for key in list(bucket.keys()):
+            key_s = str(key)
+            # 缓存里的键是 final namespace（有 workspace 时带前缀），与另两个一致
+            if not prefix or key_s.startswith(prefix):
+                try:
+                    del bucket[key]
+                except Exception:  # noqa: BLE001
+                    continue
+                cleared.append(f"{attr}:{key_s}")
+    return cleared
+
+
+def _wipe_dir(directory: str) -> None:
+    """清空库目录（保留目录本身）。"""
+    root = Path(directory)
+    root.mkdir(parents=True, exist_ok=True)
+    for child in root.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+
+
+async def reset_rag(rag: LightRAG | None, config: Config, fixture_dir: Path | None = None) -> LightRAG:
+    """**仅测试用**：清空库 → （可选）铺入预置夹具 → 重建实例。
+
+    为什么不能只删文件：LightRAG 的 KV 数据挂在进程级字典上，删了磁盘文件
+    内存里还在，新实例看到初始化标志就跳过读盘 —— 会得到一个「看起来空、
+    实际还带着上个场景实体」的库。这种污染极难排查，所以顺序必须是
+    先清共享字典，再删文件，再铺夹具，最后重建。
+    """
+    if rag is not None:
+        try:
+            await rag.finalize_storages()
+        except Exception as exc:  # noqa: BLE001 — 收尾失败不该挡住重置
+            logger.warning("重置前 finalize_storages 失败（继续）：%s: %s", type(exc).__name__, exc)
+    cleared = _clear_shared_namespaces(config.workspace)
+    if cleared:
+        logger.info("reset：清掉进程级共享命名空间 %s", ", ".join(cleared))
+    _wipe_dir(config.working_dir)
+    if fixture_dir is not None:
+        for item in Path(fixture_dir).iterdir():
+            target = Path(config.working_dir) / item.name
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, target)
+    return await init_rag(config)
 
 
 async def init_rag(config: Config) -> LightRAG:

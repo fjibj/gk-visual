@@ -1,0 +1,238 @@
+{
+  "version": "obs-20261121b",
+  "mode": "OBSERVE",
+  "observe": true,
+  "total": 14,
+  "passed": 10,
+  "failed": 0,
+  "would_fail": 3,
+  "manual": 1,
+  "baseline": null,
+  "affected": null,
+  "scenarios": [
+    {
+      "name": "s1-graph-empty",
+      "category": "success",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "空库读图不报错",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        }
+      ]
+    },
+    {
+      "name": "s3-graph-read",
+      "category": "success",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "读图：夹具的 9 个节点 / 12 条边都在",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        },
+        {
+          "name": "张三在图上，且带 M4 溯源标签",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        }
+      ]
+    },
+    {
+      "name": "s4-entity-edit",
+      "category": "success",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "改实体描述",
+          "pass": true,
+          "detail": "PATCH /api/entities/张三 → 200"
+        },
+        {
+          "name": "改完读图能看到新描述",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        }
+      ]
+    },
+    {
+      "name": "s4-merge-entities",
+      "category": "success",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "把王敏合并进李雷",
+          "pass": true,
+          "detail": "POST /api/merge → 200"
+        },
+        {
+          "name": "合并后节点少一个",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        },
+        {
+          "name": "被合并掉的王敏不再作为节点存在",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        }
+      ]
+    },
+    {
+      "name": "s5-relation-create",
+      "category": "success",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "新建关系 张三 → 成都",
+          "pass": true,
+          "detail": "POST /api/relations → 201"
+        },
+        {
+          "name": "图上出现这条边",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        },
+        {
+          "name": "边的一端是张三、另一端是成都",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        }
+      ]
+    },
+    {
+      "name": "s6-document-delete",
+      "category": "success",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "删掉张三那篇文档",
+          "pass": true,
+          "detail": "DELETE /api/documents/doc-zhangsan → 200"
+        },
+        {
+          "name": "文档列表只剩一篇",
+          "pass": true,
+          "detail": "GET /api/documents → 200"
+        },
+        {
+          "name": "只属于这篇文档的张三从图上消失",
+          "pass": true,
+          "detail": "GET /api/graph → 200"
+        }
+      ]
+    },
+    {
+      "name": "s6-document-list",
+      "category": "success",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "文档列表列出两篇",
+          "pass": true,
+          "detail": "GET /api/documents → 200"
+        },
+        {
+          "name": "张三那篇带实体统计",
+          "pass": true,
+          "detail": "GET /api/documents → 200"
+        }
+      ]
+    },
+    {
+      "name": "s7-memory-search-budget",
+      "category": "success",
+      "status": "WOULD_FAIL",
+      "checks": [
+        {
+          "name": "预算 200：注入不超过 200 token",
+          "pass": false,
+          "detail": "status: expected 200, got 500; body=null"
+        }
+      ]
+    },
+    {
+      "name": "s7-memory-search-trace",
+      "category": "success",
+      "status": "WOULD_FAIL",
+      "checks": [
+        {
+          "name": "Agent 面检索：锚点落在问题里的实体上",
+          "pass": false,
+          "detail": "status: expected 200, got 500; body=null"
+        }
+      ]
+    },
+    {
+      "name": "s7-visual-highlight-manual",
+      "category": "success",
+      "status": "MANUAL",
+      "checks": []
+    },
+    {
+      "name": "f1-no-hit-no-fabricate",
+      "category": "failure",
+      "status": "WOULD_FAIL",
+      "checks": [
+        {
+          "name": "问库里没有的东西：注入为空",
+          "pass": false,
+          "detail": "status: expected 200, got 500; body=null"
+        }
+      ]
+    },
+    {
+      "name": "b1-edit-missing-entity",
+      "category": "boundary",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "改不存在的实体",
+          "pass": true,
+          "detail": "PATCH /api/entities/子虚乌有 → 404"
+        }
+      ]
+    },
+    {
+      "name": "b2-delete-missing-document",
+      "category": "boundary",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "删不存在的文档",
+          "pass": true,
+          "detail": "DELETE /api/documents/no-such-doc → 404"
+        },
+        {
+          "name": "删完之后库没被动过",
+          "pass": true,
+          "detail": "GET /api/documents → 200"
+        }
+      ]
+    },
+    {
+      "name": "b3-blank-document-rejected",
+      "category": "boundary",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "空白内容被拒",
+          "pass": true,
+          "detail": "POST /api/documents → 400"
+        },
+        {
+          "name": "库里没多出东西",
+          "pass": true,
+          "detail": "GET /api/documents → 200"
+        }
+      ]
+    }
+  ],
+  "properties": [],
+  "timestamp": 1795268932,
+  "property_summary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0
+  }
+}

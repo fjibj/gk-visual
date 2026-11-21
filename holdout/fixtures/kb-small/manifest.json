@@ -1,0 +1,75 @@
+{
+  "entities": [
+    "张三",
+    "李雷",
+    "王敏",
+    "云栈科技",
+    "北京中关村",
+    "成都",
+    "南京大学",
+    "订单系统",
+    "仓储调度系统"
+  ],
+  "relations": [
+    {
+      "source": "张三",
+      "target": "云栈科技"
+    },
+    {
+      "source": "张三",
+      "target": "北京中关村"
+    },
+    {
+      "source": "张三",
+      "target": "订单系统"
+    },
+    {
+      "source": "张三",
+      "target": "李雷"
+    },
+    {
+      "source": "李雷",
+      "target": "云栈科技"
+    },
+    {
+      "source": "李雷",
+      "target": "南京大学"
+    },
+    {
+      "source": "云栈科技",
+      "target": "北京中关村"
+    },
+    {
+      "source": "云栈科技",
+      "target": "成都"
+    },
+    {
+      "source": "成都",
+      "target": "仓储调度系统"
+    },
+    {
+      "source": "王敏",
+      "target": "成都"
+    },
+    {
+      "source": "王敏",
+      "target": "仓储调度系统"
+    },
+    {
+      "source": "王敏",
+      "target": "李雷"
+    }
+  ],
+  "chunks": [
+    "doc-yunzhan-chunk-000",
+    "doc-yunzhan-chunk-001",
+    "doc-zhangsan-chunk-000",
+    "doc-zhangsan-chunk-001"
+  ],
+  "documents": [
+    "doc-yunzhan",
+    "doc-zhangsan"
+  ],
+  "fixture": "kb-small",
+  "generated_by": "scripts/make_holdout_fixtures.py"
+}

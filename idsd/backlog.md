@@ -227,3 +227,31 @@
   - 每步打印命令、末 12 行输出与耗时，最后一张 PASS/FAIL 表，有失败就退出码 1。
 - **分工**：CI 管离线那一半（每次 push）；preflight 管需要模型/真库的那一半（签收前本机跑）。S3 holdout 腐烂 12 天的教训靠这个兜。
 - **已实测**：`--holdout slice-3-retrieval-transparency --holdout-version preflight-smoke` → 7/7 通过（结果目录跑完即清，不进仓库）。
+
+## 23. 判卷机依赖真 LLM：订阅一断，检索类考卷全部不可判
+
+- **状态**：已知边界（2026-11-21 接入 idsd-harness v3 时撞到）。
+- **现象**：`holdout/evaluate.ts` 跑 s7 那批检索场景，`/api/_test/memory_search` 回
+  `502 上游不可用（HTTPStatusError）`，上游原文是
+  `400 InvalidSubscription: ... your subscription has expired`。
+- **为什么不能绕**：`memory_search` → `query()` → `rag.aquery_data()`，LightRAG 要用 LLM
+  做关键词抽取。这不是能 mock 掉的东西——mock 掉就不再是「测真实现」。
+- **已经做的缓解**：测试端点把上游异常转成 502 + 原因（而不是 500 空 body），
+  判卷机输出里直接写着「上游不可用」，一眼能把「环境问题 / 出题问题 / 实现缺陷」分开。
+  这是手册 §5 分诊表里没有的一类，但 gk-visual 必须加上。
+- **待解**：换一个可用模型（`GKB_LLM_*` 三件套），或者等订阅续上。**不需要改代码**。
+- **另一条出路（未评估）**：本地 Ollama 拉一个中文 chat 模型（如 qwen 系列）。代价是
+  抽词质量下降，且属性测试会更慢；好处是判卷彻底不依赖外部服务、可进 preflight 常规化。
+
+## 24. 判卷机的夹具要「与真实摄取产物同形」，缺表会假成功
+
+- **状态**：已修（2026-11-21）。来源：observe 首轮 `s6-document-delete` / `s6-document-list` 两条红。
+- **现象**：手搓的 `holdout/fixtures/kb-small` 只写了图 + 块 + 向量，删掉 `doc-zhangsan` 后
+  `张三` 还在图上，`GET /api/documents` 的 `entity_count` 恒为 0。
+- **根因**：LightRAG 删文档时**靠 `full_entities` / `full_relations` 找该删哪些实体**，
+  而文档贡献统计靠 `doc_status.chunks_list` 反向算；`entity_chunks` / `relation_chunks`
+  还各有一份 `{chunk_ids, count, updated_at}` 的偏本账。少任何一张，
+  `adelete_by_doc_id` 会「成功」返回而图上什么也不动——这种假成功最难查。
+- **处置**：`scripts/make_holdout_fixtures.py` 补齐这四张表 + `chunks_list`，夹具重建后两条场景转绿。
+- **判据**：以后改夹具，先跑 `scripts/verify_holdout_reset.py`（重置隔离）再跑 observe；
+  两条「夹具越薄越绿」的假象都是这么抓到的。

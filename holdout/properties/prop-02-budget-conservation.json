@@ -1,0 +1,42 @@
+{
+  "id": "PROP-02",
+  "name": "budget-conservation",
+  "invariant": "任意问题、任意 max_context_tokens 下，answer_context 的 token 数都不超过预算",
+  "runs": 15,
+  "shrink": true,
+  "fixture": "kb-small",
+  "variables": {
+    "budget": { "type": "int", "min": 80, "max": 2000 },
+    "question": {
+      "type": "pick",
+      "values": ["张三在哪工作", "李雷毕业于哪所大学", "云栈科技有几个办公地点", "谁负责订单系统"]
+    },
+    "evidence": {
+      "type": "pick",
+      "values": [
+        "张三在北京的云栈科技负责订单系统",
+        "李雷毕业于南京大学",
+        "云栈科技总部在北京中关村，在成都设有研发分部",
+        "张三负责订单系统，王敏负责仓储调度系统"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "name": "按预算检索",
+      "method": "POST",
+      "url": "/api/_test/memory_search",
+      "body": { "question": "{{question}}", "evidence_text": "{{evidence}}", "budget": "{{budget}}" },
+      "expect": { "status": 200 }
+    }
+  ],
+  "assert": [
+    {
+      "name": "注入 token 不得超过预算",
+      "method": "POST",
+      "url": "/api/_test/memory_search",
+      "body": { "question": "{{question}}", "evidence_text": "{{evidence}}", "budget": "{{budget}}" },
+      "expect": { "status": 200, "json": { "context_tokens": { "$lte": "{{budget}}" } } }
+    }
+  ]
+}

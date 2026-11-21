@@ -1,0 +1,42 @@
+{
+  "id": "PROP-01",
+  "name": "trace-determinism",
+  "invariant": "同一（问题, 证据文本, 图版本）必产生同一分层 trace（锚点/引用点/路径集合相同）",
+  "runs": 12,
+  "shrink": false,
+  "fixture": "kb-small",
+  "variables": {
+    "question": {
+      "type": "pick",
+      "values": ["张三在哪工作", "李雷毕业于哪所大学", "云栈科技的研发分部在哪", "谁负责仓储调度系统"]
+    },
+    "evidence": {
+      "type": "pick",
+      "values": [
+        "张三在北京的云栈科技负责订单系统",
+        "李雷毕业于南京大学",
+        "云栈科技在成都设有研发分部",
+        "王敏负责仓储调度系统"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "name": "第一次检索并记下 trace_hash",
+      "method": "POST",
+      "url": "/api/_test/memory_search",
+      "body": { "question": "{{question}}", "evidence_text": "{{evidence}}", "budget": 800 },
+      "expect": { "status": 200 },
+      "capture": { "trace1": "trace_hash" }
+    }
+  ],
+  "assert": [
+    {
+      "name": "同一输入第二次检索：trace_hash 必须逐字相同",
+      "method": "POST",
+      "url": "/api/_test/memory_search",
+      "body": { "question": "{{question}}", "evidence_text": "{{evidence}}", "budget": 800 },
+      "expect": { "status": 200, "json": { "trace_hash": "{{trace1}}" } }
+    }
+  ]
+}

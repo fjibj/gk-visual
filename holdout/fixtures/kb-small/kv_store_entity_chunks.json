@@ -1,0 +1,97 @@
+{
+  "张三": {
+    "chunk_ids": [
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "张三"
+  },
+  "李雷": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-000",
+      "doc-zhangsan-chunk-001"
+    ],
+    "count": 2,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "李雷"
+  },
+  "王敏": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-001",
+      "doc-zhangsan-chunk-001"
+    ],
+    "count": 2,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "王敏"
+  },
+  "云栈科技": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-000",
+      "doc-yunzhan-chunk-001",
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 3,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "云栈科技"
+  },
+  "北京中关村": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-000",
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 2,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "北京中关村"
+  },
+  "成都": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-001"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "成都"
+  },
+  "南京大学": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "南京大学"
+  },
+  "订单系统": {
+    "chunk_ids": [
+      "doc-zhangsan-chunk-000"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "订单系统"
+  },
+  "仓储调度系统": {
+    "chunk_ids": [
+      "doc-yunzhan-chunk-001"
+    ],
+    "count": 1,
+    "updated_at": "2026-11-21T21:48:30",
+    "create_time": 1795268910,
+    "update_time": 1795268910,
+    "_id": "仓储调度系统"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "id": "PROP-03",
+  "name": "trace-evidence-closure",
+  "invariant": "trace 中被引用的每个实体都存在于当前图中（没有悬空引用 / 孤儿节点）",
+  "runs": 12,
+  "shrink": false,
+  "fixture": "kb-small",
+  "variables": {
+    "question": {
+      "type": "pick",
+      "values": ["张三在哪工作", "李雷毕业于哪所大学", "云栈科技的研发分部在哪", "王敏负责什么系统"]
+    },
+    "evidence": {
+      "type": "pick",
+      "values": [
+        "张三在北京的云栈科技负责订单系统",
+        "李雷毕业于南京大学，是云栈科技的创始人",
+        "云栈科技在成都设有研发分部",
+        "王敏负责仓储调度系统"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "name": "检索并数悬空引用",
+      "method": "POST",
+      "url": "/api/_test/memory_search",
+      "body": { "question": "{{question}}", "evidence_text": "{{evidence}}", "budget": 800 },
+      "expect": { "status": 200 },
+      "capture": { "dangling": "trace_dangling_count" }
+    }
+  ],
+  "assert": [
+    {
+      "name": "悬空引用数必须为 0",
+      "method": "POST",
+      "url": "/api/_test/memory_search",
+      "body": { "question": "{{question}}", "evidence_text": "{{evidence}}", "budget": 800 },
+      "expect": { "status": 200, "json": { "trace_dangling_count": 0 } }
+    },
+    {
+      "name": "本次捕获的悬空数也是 0（自证 capture 有效）",
+      "method": "POST",
+      "url": "/api/_test/memory_search",
+      "body": { "question": "{{question}}", "evidence_text": "{{evidence}}", "budget": 800 },
+      "expect": { "status": 200, "json": { "trace_dangling_count": "{{dangling}}" } }
+    }
+  ]
+}
